@@ -87,15 +87,15 @@ install: modules
 	@$(MAKE) -C $(KLIB_BUILD) M=$(BACKPORT_PWD)			\
 		INSTALL_MOD_DIR=$(KMODDIR) $(KMODPATH_ARG)		\
 		modules_install
-	@./scripts/blacklist.sh $(KLIB)/ $(KLIB)/$(KMODDIR)
-	@./scripts/compress_modules.sh $(KLIB)/$(KMODDIR)
-	@./scripts/check_depmod.sh
-	@./scripts/backport_firmware_install.sh
-	@/sbin/depmod -a
-	@./scripts/update-initramfs.sh $(KLIB)
-	@echo
+#	@./scripts/blacklist.sh $(KLIB)/ $(KLIB)/$(KMODDIR)
+#	@./scripts/compress_modules.sh $(KLIB)/$(KMODDIR)
+#	@./scripts/check_depmod.sh
+#	@./scripts/backport_firmware_install.sh
+#	@/sbin/depmod -a
+#	@./scripts/update-initramfs.sh $(KLIB)
+#	@echo
 	@echo Your backported driver modules should be installed now.
-	@echo Reboot.
+#	@echo Reboot.
 	@echo
 
 .PHONY: modules_install

@@ -22,7 +22,10 @@ BACKPORTS=./backports-3.11-rc3-1
 cp LEGOExtra.config ${BACKPORTS}/.config
 cd ${BACKPORTS}
 make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabi- KLIB=../modules/lib/modules/2.6.33-rc4/ clean
-make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabi- KLIB=../modules/lib/modules/2.6.33-rc4/
+make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabi- KLIB=../modules/lib/modules/2.6.33-rc4/ 
+make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabi- KLIB=../modules/lib/modules/2.6.33-rc4/ KMODDIR=kernel KMODPATH_ARG="INSTALL_MOD_PATH=../modules" install
+exit
+DEST=`echo ../modules/lib/modules/*/`
 DEST=`echo ../modules/lib/modules/*/kernel/`
 sudo mkdir -p $DEST/compat
 sudo cp compat/*.ko $DEST/compat

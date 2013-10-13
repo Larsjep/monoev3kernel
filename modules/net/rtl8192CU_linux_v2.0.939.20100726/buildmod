@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Setup directories
-source ../../lms2012/open_first/env_setup
+source ../env_setup
 
 # Be sure to have path to compiler
 if [ -d $AM1808_COMPILER ]
