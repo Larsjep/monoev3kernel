@@ -42,7 +42,7 @@
 static struct {
 	void *virt_addr;
 	dma_addr_t phys_addr;
-	u32 size;
+	u32     size;
 } linking_ram[CPPI41_NUM_QUEUE_MGR];
 
 static u32 *allocated_queues[CPPI41_NUM_QUEUE_MGR];
@@ -57,6 +57,9 @@ static struct {
 	dma_addr_t phys_addr;
 	struct cppi41_queue_obj queue_obj;
 	u8 mem_rgn;
+	u16 q_mgr;
+	u16 q_num;
+	u32 num_desc;
 } dma_teardown[CPPI41_NUM_DMA_BLOCK];
 
 struct cppi41_dma_sched_tbl_t {
@@ -66,7 +69,6 @@ struct cppi41_dma_sched_tbl_t {
 	u8      enb;
 };
 
-#define MAX_SCHED_TBL_ENTRY     8
 struct cppi41_dma_sched_tbl_t dma_sched_tbl[MAX_SCHED_TBL_ENTRY] = {
 	/*pos  dma_ch#  is_tx  enb/dis*/
 	{ 0,    0,      0,      1},
@@ -99,6 +101,7 @@ int cppi41_queue_mgr_init(u8 q_mgr, dma_addr_t rgn0_base, u16 rgn0_size)
 		return -ENOMEM;
 	}
 	linking_ram[q_mgr].virt_addr = ptr;
+	linking_ram[q_mgr].size = rgn0_size * 4;
 
 	__raw_writel(linking_ram[q_mgr].phys_addr,
 			q_mgr_regs + QMGR_LINKING_RAM_RGN0_BASE_REG);
@@ -127,21 +130,27 @@ int cppi41_queue_mgr_init(u8 q_mgr, dma_addr_t rgn0_base, u16 rgn0_size)
 }
 EXPORT_SYMBOL(cppi41_queue_mgr_init);
 
-void cppi41_queue_mgr_deinit(u8 q_mgr)
+int cppi41_queue_mgr_uninit(u8 q_mgr)
 {
-	/* free the allocated linking ram memory */
+	void __iomem *q_mgr_regs;
+
+	if (q_mgr >= cppi41_num_queue_mgr)
+		return -EINVAL;
+
+	q_mgr_regs = cppi41_queue_mgr[q_mgr].q_mgr_rgn_base;
+
+	/* free the Queue Mgr linking ram space */
+	__raw_writel(0,	q_mgr_regs + QMGR_LINKING_RAM_RGN0_BASE_REG);
+	__raw_writel(0, q_mgr_regs + QMGR_LINKING_RAM_RGN0_SIZE_REG);
 	dma_free_coherent(NULL, linking_ram[q_mgr].size,
-		linking_ram[q_mgr].virt_addr, linking_ram[q_mgr].phys_addr);
+			linking_ram[q_mgr].virt_addr,
+			linking_ram[q_mgr].phys_addr);
 
-	linking_ram[q_mgr].virt_addr = 0;
-	linking_ram[q_mgr].phys_addr = 0;
-	linking_ram[q_mgr].size = 0;
-
-	/* free the queue bit map memory */
-	kzfree(allocated_queues[q_mgr]);
-	allocated_queues[q_mgr] = 0;
+	/* free the allocated queues */
+	kfree(allocated_queues[q_mgr]);
+	return 0;
 }
-EXPORT_SYMBOL(cppi41_queue_mgr_deinit);
+EXPORT_SYMBOL(cppi41_queue_mgr_uninit);
 
 int cppi41_dma_sched_tbl_init(u8 dma_num, u8 q_mgr,
 			u32 *sched_tbl, u8 tbl_size)
@@ -320,6 +329,8 @@ int cppi41_dma_block_init(u8 dma_num, u8 q_mgr, u8 num_order,
 		goto free_rgn;
 	}
 
+	dma_teardown[dma_num].q_num = q_num;
+	dma_teardown[dma_num].q_mgr = q_mgr;
 	/*
 	 * Push all teardown descriptors to the free teardown queue
 	 * for the CPPI 4.1 system.
@@ -332,6 +343,7 @@ int cppi41_dma_block_init(u8 dma_num, u8 q_mgr, u8 num_order,
 				  sizeof(*curr_td), 0);
 		td_addr += sizeof(*curr_td);
 	}
+	dma_teardown[dma_num].num_desc = num_desc;
 
 	/* Initialize the DMA scheduler. */
 	num_reg = (tbl_size + 3) / 4;
@@ -365,22 +377,43 @@ free_queue:
 }
 EXPORT_SYMBOL(cppi41_dma_block_init);
 
-void cppi41_dma_block_deinit(u8 dma_num, u8 q_mgr)
+int cppi41_dma_block_uninit(u8 dma_num, u8 q_mgr, u8 num_order,
+				 u32 *sched_tbl, u8 tbl_size)
 {
-	/* pop all the teardown descriptors from teardown queue */
+	const struct cppi41_dma_block *dma_block;
+	unsigned num_reg;
+	int i;
+
+	/* popout all teardown descriptors */
 	cppi41_free_teardown_queue(dma_num);
-	dma_teardown[dma_num].queue_obj.base_addr = NULL;
 
-	/* free the teardown descripotr memory */
+	/* free queue mgr region */
+	cppi41_mem_rgn_free(q_mgr, dma_teardown[dma_num].mem_rgn);
+	/* free the allocated teardown descriptors */
 	dma_free_coherent(NULL, dma_teardown[dma_num].rgn_size,
-		dma_teardown[dma_num].virt_addr,
-		dma_teardown[dma_num].phys_addr);
+			dma_teardown[dma_num].virt_addr,
+			dma_teardown[dma_num].phys_addr);
 
-	dma_teardown[dma_num].virt_addr = 0;
-	dma_teardown[dma_num].phys_addr = 0;
+	/* free the teardown queue*/
+	cppi41_queue_free(dma_teardown[dma_num].q_mgr,
+			dma_teardown[dma_num].q_num);
+
+	dma_block = (struct cppi41_dma_block *)&cppi41_dma_block[dma_num];
+	/* disable the dma schedular */
+	num_reg = (tbl_size + 3) / 4;
+	for (i = 0; i < num_reg; i++) {
+		__raw_writel(0, dma_block->sched_table_base +
+			     DMA_SCHED_TABLE_WORD_REG(i));
+		DBG("DMA scheduler table @ %p, value written: %x\n",
+		    dma_block->sched_table_base + DMA_SCHED_TABLE_WORD_REG(i),
+		    0);
+	}
+
+	__raw_writel(0,	dma_block->sched_ctrl_base + DMA_SCHED_CTRL_REG);
+
+	return 0;
 }
-EXPORT_SYMBOL(cppi41_dma_block_deinit);
-
+EXPORT_SYMBOL(cppi41_dma_block_uninit);
 /*
  * cppi41_mem_rgn_alloc - allocate a memory region within the queue manager
  */
@@ -556,6 +589,9 @@ void cppi41_rx_ch_configure(struct cppi41_dma_ch_obj *rx_ch_obj,
 	       ((cfg->rx_queue.q_num << DMA_CH_RX_DEFAULT_RQ_QNUM_SHIFT) &
 		DMA_CH_RX_DEFAULT_RQ_QNUM_MASK);
 
+	val &= ~(0x7 << DMA_CH_RX_MAX_BUF_CNT_SHIFT);
+	val |= (cfg->rx_max_buf_cnt << DMA_CH_RX_MAX_BUF_CNT_SHIFT);
+
 	rx_ch_obj->global_cfg = val;
 	__raw_writel(val, base);
 	DBG("Rx channel global configuration @ %p, value written: %x, "
@@ -674,6 +710,24 @@ void cppi41_rx_ch_configure(struct cppi41_dma_ch_obj *rx_ch_obj,
 }
 EXPORT_SYMBOL(cppi41_rx_ch_configure);
 
+void cppi41_rx_ch_set_maxbufcnt(struct cppi41_dma_ch_obj *rx_ch_obj,
+			    u8 rx_max_buf_cnt)
+{
+	void __iomem *base = rx_ch_obj->base_addr;
+	u32 val = __raw_readl(rx_ch_obj->base_addr);
+
+	val = rx_ch_obj->global_cfg;
+	val &= ~(0x7 << DMA_CH_RX_MAX_BUF_CNT_SHIFT);
+	val |= (rx_max_buf_cnt << DMA_CH_RX_MAX_BUF_CNT_SHIFT);
+
+	rx_ch_obj->global_cfg = val;
+	__raw_writel(val, base);
+
+	DBG("%s: rx-global-cfg @ %p, value written: %x, "
+	    "value read: %x\n", __func__, base, val, __raw_readl(base));
+
+}
+EXPORT_SYMBOL(cppi41_rx_ch_set_maxbufcnt);
 /*
  * cppi41_dma_ch_teardown - teardown a given Tx/Rx channel
  */
@@ -723,34 +777,16 @@ EXPORT_SYMBOL(cppi41_dma_ch_disable);
 void cppi41_free_teardown_queue(int dma_num)
 {
 	unsigned long td_addr;
+	u32 num_desc = dma_teardown[dma_num].num_desc;
 
-	while ((td_addr =
-		cppi41_queue_pop(&dma_teardown[dma_num].queue_obj)) != 0)
-		DBG("pop tdDesc(%p) from tdQueue\n", td_addr);
+	while (num_desc--) {
+		td_addr = cppi41_queue_pop(&dma_teardown[dma_num].queue_obj);
+
+		if (td_addr == 0)
+			break;
+	}
 }
 EXPORT_SYMBOL(cppi41_free_teardown_queue);
-
-void cppi41_exit(void)
-{
-	int i;
-	for (i = 0; i < CPPI41_NUM_QUEUE_MGR; i++) {
-		if (linking_ram[i].virt_addr != NULL)
-			dma_free_coherent(NULL, 0x10000,
-				linking_ram[i].virt_addr,
-				linking_ram[i].phys_addr);
-		if (allocated_queues[i] != NULL)
-			kfree(allocated_queues[i]);
-	}
-	for (i = 0; i < CPPI41_NUM_DMA_BLOCK; i++)
-		if (dma_teardown[i].virt_addr != NULL) {
-
-			cppi41_mem_rgn_free(0,  dma_teardown[i].mem_rgn);
-			dma_free_coherent(NULL, dma_teardown[i].rgn_size,
-					dma_teardown[i].virt_addr,
-					dma_teardown[i].phys_addr);
-		}
-}
-EXPORT_SYMBOL(cppi41_exit);
 
 /**
  * alloc_queue - allocate a queue in the given range
@@ -849,12 +885,13 @@ int cppi41_queue_free(u8 q_mgr, u16 q_num)
 {
 	int index = q_num >> 5, bit = 1 << (q_num & 0x1f);
 
-	if (q_mgr >= cppi41_num_queue_mgr ||
-	    q_num >= cppi41_queue_mgr[q_mgr].num_queue ||
-	    !(allocated_queues[q_mgr][index] & bit))
-		return -EINVAL;
-
-	allocated_queues[q_mgr][index] &= ~bit;
+	if (allocated_queues[q_mgr] != NULL) {
+		if (q_mgr >= cppi41_num_queue_mgr ||
+		    q_num >= cppi41_queue_mgr[q_mgr].num_queue ||
+		    !(allocated_queues[q_mgr][index] & bit))
+			return -EINVAL;
+		allocated_queues[q_mgr][index] &= ~bit;
+	}
 	return 0;
 }
 EXPORT_SYMBOL(cppi41_queue_free);

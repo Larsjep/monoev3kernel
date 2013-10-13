@@ -77,17 +77,18 @@
  * ---------------------------------
  */
 
-static const u16 tx_comp_q[] = { 24, 25 };
-static const u16 rx_comp_q[] = { 26, 27 };
+static const u16 tx_comp_q[] = { 24, 24, 24, 24 };
+static const u16 rx_comp_q[] = { 26, 26, 26, 26 };
 
-const struct usb_cppi41_info usb_cppi41_info = {
+struct usb_cppi41_info usb_cppi41_info = {
 	.dma_block	= 0,
 	.ep_dma_ch	= { 0, 1, 2, 3 },
 	.q_mgr		= 0,
 	.num_tx_comp_q	= 2,
 	.num_rx_comp_q	= 2,
-	.tx_comp_q	= tx_comp_q,
-	.rx_comp_q	= rx_comp_q
+	.tx_comp_q	= (u16 *) tx_comp_q,
+	.rx_comp_q	= (u16 *) rx_comp_q,
+	.bd_intr_ctrl	= 0,
 };
 
 /* DMA block configuration */
@@ -157,55 +158,37 @@ u32 dma_sched_table[] = {
 int cppi41_init(void)
 {
 	u16 order;
-	u8 q_mgr, dma_num = 0, numch;
+	u8 q_mgr = 0, dma_num = 0, numch;
 
-	for (q_mgr = 0; q_mgr < CPPI41_NUM_QUEUE_MGR; ++q_mgr) {
-		/* Allocate memory for region 0 */
-		cppi41_queue_mgr[q_mgr].ptr_rgn0 = dma_alloc_coherent(NULL,
-						USB_CPPI41_QMGR_REG0_MAX_SIZE,
-						&cppi41_queue_mgr[q_mgr].
-						phys_ptr_rgn0,
-						GFP_KERNEL | GFP_DMA);
+	/* Initialize Queue Manager 0, alloc for region 0 */
+	cppi41_queue_mgr_init(q_mgr, 0, 0x3fff);
 
-		/* Initialize Queue Manager 0, alloc for region 0 */
-		cppi41_queue_mgr_init(q_mgr,
-			cppi41_queue_mgr[q_mgr].phys_ptr_rgn0,
-			USB_CPPI41_QMGR_REG0_ALLOC_SIZE);
+	numch =  USB_CPPI41_NUM_CH * 2;
+	cppi41_dma_block[0].num_max_ch = numch;
+	order = get_count_order(numch);
 
-		numch =  USB_CPPI41_NUM_CH * 2;
-		order = get_count_order(numch);
+	if (order < 5)
+		order = 5;
 
-		if (order < 5)
-			order = 5;
-
-		cppi41_dma_block_init(dma_num, q_mgr, order,
-			dma_sched_table, numch);
-	}
+	cppi41_dma_block_init(dma_num, q_mgr, order, dma_sched_table, numch);
 	return 0;
 }
-EXPORT_SYMBOL(cppi41_init);
 
-void cppi41_deinit(void)
+void cppi41_free(void)
 {
-	u8 q_mgr = 0, dma_block = 0;
+	u32 numch, blknum, order;
+	struct usb_cppi41_info *cppi_info = &usb_cppi41_info;
 
-	for (q_mgr = 0; q_mgr < CPPI41_NUM_QUEUE_MGR; ++q_mgr) {
-		/* deinit dma block */
-		cppi41_dma_block_deinit(dma_block, q_mgr);
 
-		/* deinit queue manager */
-		cppi41_queue_mgr_deinit(q_mgr);
+	numch = cppi41_dma_block[0].num_max_ch;
+	order = get_count_order(numch);
+	blknum = cppi_info->dma_block;
 
-		/* free the allocated region0 memory */
-		dma_free_coherent(NULL, USB_CPPI41_QMGR_REG0_MAX_SIZE,
-			cppi41_queue_mgr[q_mgr].ptr_rgn0,
-			cppi41_queue_mgr[q_mgr].phys_ptr_rgn0);
-
-		cppi41_queue_mgr[q_mgr].phys_ptr_rgn0 = 0;
-		cppi41_queue_mgr[q_mgr].ptr_rgn0 = 0;
-	}
+	/* deinit dma block */
+	cppi41_dma_block_uninit(blknum, cppi_info->q_mgr, order,
+			dma_sched_table, numch);
+	cppi41_queue_mgr_uninit(cppi_info->q_mgr);
 }
-EXPORT_SYMBOL(cppi41_deinit);
 #endif /* CONFIG_USB_TI_CPPI41_DMA */
 
 /*
@@ -504,13 +487,12 @@ static irqreturn_t da8xx_interrupt(int irq, void *hci)
 	spin_unlock_irqrestore(&musb->lock, flags);
 
 	if (ret != IRQ_HANDLED) {
-		if (status){
+		if (status)
 			/*
 			 * We sometimes get unhandled IRQs in the peripheral
 			 * mode from EP0 and SOF...
 			 */
-//			ERR("Unhandled USB IRQ %08x\n", status);    //LEGO - removed to avoid printout on sensorport when connecting/disconn. usb 
-    }
+			ERR("Unhandled USB IRQ %08x\n", status);
 		else if (printk_ratelimit())
 			/*
 			 * We've seen series of spurious interrupts in the
@@ -638,5 +620,8 @@ done:
 	otg_put_transceiver(musb->xceiv);
 	usb_nop_xceiv_unregister();
 
+#ifdef CONFIG_USB_TI_CPPI41_DMA
+	cppi41_free();
+#endif
 	return 0;
 }

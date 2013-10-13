@@ -46,10 +46,10 @@
 
 /* Memory Region R Control Register bits */
 #define QMGR_MEM_RGN_INDEX_SHIFT	16
-#define QMGR_MEM_RGN_INDEX_MASK 	(0x3fff << QMGR_MEM_RGN_INDEX_SHIFT)
+#define QMGR_MEM_RGN_INDEX_MASK		(0x3fff << QMGR_MEM_RGN_INDEX_SHIFT)
 #define QMGR_MEM_RGN_DESC_SIZE_SHIFT	8
 #define QMGR_MEM_RGN_DESC_SIZE_MASK	(0xf << QMGR_MEM_RGN_DESC_SIZE_SHIFT)
-#define QMGR_MEM_RGN_SIZE_SHIFT 	0
+#define QMGR_MEM_RGN_SIZE_SHIFT		0
 #define QMGR_MEM_RGN_SIZE_MASK		(7 << QMGR_MEM_RGN_SIZE_SHIFT)
 
 /*
@@ -135,6 +135,11 @@
 #define DMA_CH_RX_DEFAULT_RQ_QNUM_SHIFT 0
 #define DMA_CH_RX_DEFAULT_RQ_QNUM_MASK	(0xfff << \
 					 DMA_CH_RX_DEFAULT_RQ_QNUM_SHIFT)
+#define DMA_CH_RX_MAX_BUF_CNT_SHIFT	26
+#define	DMA_CH_RX_MAX_BUF_CNT_0		0
+#define	DMA_CH_RX_MAX_BUF_CNT_1		1
+#define	DMA_CH_RX_MAX_BUF_CNT_2		2
+#define	DMA_CH_RX_MAX_BUF_CNT_3		3
 
 /* Rx Channel N Host Packet Configuration Register A/B bits */
 #define DMA_CH_RX_HOST_FDQ_QMGR_SHIFT(n) (12 + 16 * ((n) & 1))
@@ -176,22 +181,29 @@
  */
 #define DMA_SCHED_CTRL_REG		0x00
 
-/*
- * CPPI 4.1 configuration data
- */
-#define USB_CPPI41_QMGR_REG0_MAX_SIZE           0x10000
-#define USB_CPPI41_QMGR_REG0_ALLOC_SIZE         0x3fff
-
 /* DMA Scheduler Control Register bits */
 #define DMA_SCHED_ENABLE_SHIFT		31
 #define DMA_SCHED_ENABLE_MASK		(1 << DMA_SCHED_ENABLE_SHIFT)
 #define DMA_SCHED_LAST_ENTRY_SHIFT	0
 #define DMA_SCHED_LAST_ENTRY_MASK	(0xff << DMA_SCHED_LAST_ENTRY_SHIFT)
 
+#define CPPI41_TXDMA_MAXLEN		(4 * 1024 * 1024 - 1)
+#define CPPI41_RXDMA_MAXLEN		(64 * 1024)
+
+/*
+ * Queue Status register
+ */
+#define CPPI41_QSTATUS_REG0	0x90
+#define CPPI41_QSTATUS_REG1	0x94
+#define CPPI41_QSTATUS_REG2	0x98
+#define CPPI41_QSTATUS_REG3	0x9c
+#define CPPI41_QSTATUS_REG4	0xa0
+
 /*
  * DMA Scheduler - Table Region
  */
 #define DMA_SCHED_TABLE_WORD_REG(n)	((n) << 2)
+#define MAX_SCHED_TBL_ENTRY     8
 
 /*
  * CPPI 4.1 Host Packet Descriptor
@@ -246,16 +258,16 @@ struct cppi41_host_buf_desc {
 #define CPPI41_PKT_TYPE_EFM		4
 #define CPPI41_PKT_TYPE_USB		5
 #define CPPI41_PKT_TYPE_GENERIC		6
-#define CPPI41_PKT_TYPE_ETHERNET 	7
+#define CPPI41_PKT_TYPE_ETHERNET	7
 #define CPPI41_RETURN_POLICY_SHIFT	15
-#define CPPI41_RETURN_POLICY_MASK 	(1 << CPPI41_RETURN_POLICY_SHIFT)
+#define CPPI41_RETURN_POLICY_MASK	(1 << CPPI41_RETURN_POLICY_SHIFT)
 #define CPPI41_RETURN_LINKED		0
 #define CPPI41_RETURN_UNLINKED		1
 #define CPPI41_ONCHIP_SHIFT		14
 #define CPPI41_ONCHIP_MASK		(1 << CPPI41_ONCHIP_SHIFT)
-#define CPPI41_RETURN_QMGR_SHIFT 	12
+#define CPPI41_RETURN_QMGR_SHIFT	12
 #define CPPI41_RETURN_QMGR_MASK		(3 << CPPI41_RETURN_QMGR_SHIFT)
-#define CPPI41_RETURN_QNUM_SHIFT 	0
+#define CPPI41_RETURN_QNUM_SHIFT	0
 #define CPPI41_RETURN_QNUM_MASK		(0xfff << CPPI41_RETURN_QNUM_SHIFT)
 
 #define CPPI41_SRC_TAG_PORT_NUM_SHIFT	27
@@ -267,6 +279,7 @@ struct cppi41_host_buf_desc {
 					CPPI41_SRC_TAG_SUB_CH_NUM_SHIFT)
 #define CPPI41_DEST_TAG_SHIFT		0
 #define CPPI41_DEST_TAG_MASK		(0xffff << CPPI41_DEST_TAG_SHIFT)
+#define CPPI41_PKT_INTR_FLAG		(1 << 31)
 
 /*
  * CPPI 4.1 Teardown Descriptor
@@ -285,18 +298,9 @@ struct cppi41_teardown_desc {
 
 #define CPPI41_MAX_MEM_RGN		16
 
-#if 0
 /* CPPI 4.1 configuration for AM3517 */
 #define CPPI41_NUM_QUEUE_MGR		1	/* 4  max */
 #define CPPI41_NUM_DMA_BLOCK		1	/* 64 max */
-#define cppi41_num_queue_mgr	CPPI41_NUM_QUEUE_MGR
-#define cppi41_num_dma_block	CPPI41_NUM_DMA_BLOCK
-#endif
-/* CPPI 4.1 configuration for DA8xx */
-#define CPPI41_NUM_QUEUE_MGR            1       /* 4  max */
-#define CPPI41_NUM_DMA_BLOCK            1       /* 64 max */
-#define CPPI41_DMACH_TX_DIR             1
-#define CPPI41_DMACH_RX_DIR             0
 #define cppi41_num_queue_mgr	CPPI41_NUM_QUEUE_MGR
 #define cppi41_num_dma_block	CPPI41_NUM_DMA_BLOCK
 
@@ -336,7 +340,7 @@ struct cppi41_queue_mgr {
 	void __iomem *q_stat_rgn_base; /* Base address of the queue status */
 				/* region. */
 	u16 num_queue;		/* Number of the queues supported. */
-	u8  queue_types; 	/* Bitmask of the supported queue types. */
+	u8 queue_types;		/* Bitmask of the supported queue types. */
 	u16 base_fdq_num;	/* The base free descriptor queue number. */
 				/* If present, there's always 16 such queues. */
 	u16 base_fdbq_num;	/* The base free descriptor/buffer queue */
@@ -344,14 +348,12 @@ struct cppi41_queue_mgr {
 				/* such queues. */
 	const u32 *assigned;	/* Pointer to the bitmask of the pre-assigned */
 				/* queues. */
-	void  *ptr_rgn0;        /* Pointer to region 0 memory */
-	dma_addr_t phys_ptr_rgn0; /* Phs pointer to region0 memory */
 };
 
 /* Queue type flags */
 #define CPPI41_FREE_DESC_QUEUE		0x01
 #define CPPI41_FREE_DESC_BUF_QUEUE	0x02
-#define CPPI41_UNASSIGNED_QUEUE 	0x04
+#define CPPI41_UNASSIGNED_QUEUE		0x04
 
 /**
  * struct cppi41_embed_pkt_cfg - Rx Channel Embedded packet configuration
@@ -425,6 +427,11 @@ struct cppi41_rx_ch_cfg {
 	u8 retry_starved;	/* 0 = Drop packet on descriptor/buffer */
 				/* starvartion, 1 = DMA retries FIFO block */
 				/* transfer at a later time */
+	u8 rx_max_buf_cnt;	/* The DMA ignores the SOP bit and closes up
+				 * a packet after a max_buf_cnt buffer has been
+				 * filled OR if the EOP field is set in the
+				 * info word 0
+				 */
 	struct cppi41_queue rx_queue; /* Rx complete packets queue */
 	union {
 		struct cppi41_host_pkt_cfg host_pkt; /* Host packet */
@@ -474,6 +481,7 @@ struct cppi41_dma_block {
 				/* Table registers. */
 	u8 num_tx_ch;		/* Number of the Tx channels. */
 	u8 num_rx_ch;		/* Number of the Rx channels. */
+	u8 num_max_ch;		/* maximum dma channels */
 	const struct cppi41_tx_ch *tx_ch_info;
 };
 
@@ -507,7 +515,13 @@ struct cppi41_queue_obj {
  */
 int cppi41_queue_mgr_init(u8 q_mgr, dma_addr_t rgn0_base, u16 rgn0_size);
 
-void cppi41_queue_mgr_deinit(u8 q_mgr);
+/**
+ * cppi41_queue_mgr_init - CPPI 4.1 queue manager un-initialization.
+ * @q_mgr:	the queue manager to un-initialize
+ * Returns 0 on success, error otherwise.
+ */
+int cppi41_queue_mgr_uninit(u8 q_mgr);
+
 /*
  * CPPI 4.1 Queue Manager Memory Region Allocation and De-allocation APIs.
  */
@@ -556,14 +570,18 @@ int cppi41_dma_block_init(u8 dma_num, u8 q_mgr, u8 num_order,
 				 u32 *sched_tbl, u8 tbl_size);
 
 /**
- * cppi41_dma_block_deinit - CPPI 4.1 DMA block de-initialization.
- * @dma_num:    number of the DMA block
- * @q_mgr:      the queue manager in which to allocate the free teardown
- *              descriptor queue
+ * cppi41_dma_block_init - CPPI 4.1 DMA block un-initialization.
+ * @dma_num:	number of the DMA block
+ * @q_mgr:	the queue manager in which to allocate the free teardown
+ *		descriptor queue
+ * @num_order:	number of teardown descriptors as a power of two (at least 5)
+ * @sched_tbl:	the DMA scheduler table
+ * @tbl_size:	number of entries in the DMA scheduler table
  *
- * Returns none.
+ * Returns 0 on success, error otherwise.
  */
-void cppi41_dma_block_deinit(u8 dma_num, u8 q_mgr);
+int cppi41_dma_block_uninit(u8 dma_num, u8 q_mgr, u8 num_order,
+				 u32 *sched_tbl, u8 tbl_size);
 
 /*
  * CPPI 4.1 DMA Channel Management APIs
@@ -615,6 +633,17 @@ void cppi41_dma_ch_default_queue(struct cppi41_dma_ch_obj *dma_ch_obj,
 void cppi41_rx_ch_configure(struct cppi41_dma_ch_obj *rx_ch_obj,
 			    struct cppi41_rx_ch_cfg  *cfg);
 
+/**
+ * cppi41_rx_ch_set_maxbufcnt - configure max rx buffer count
+ * @rx_ch_obj:	pointer to Rx channel object
+ * rx_max_buf_cnt: maximum rx buffer count
+ *
+ * This function configures the maximum rx buffer count in rx dma
+ * global configuration register. The valid rx_max_buf_cnt value
+ * must be 0 to 4.
+ */
+void cppi41_rx_ch_set_maxbufcnt(struct cppi41_dma_ch_obj *rx_ch_obj,
+			    u8 rx_max_buf_cnt);
 /**
  * cppi41_dma_ch_enable - enable CPPI 4.1 Tx/Rx DMA channel
  * @dma_ch_obj:	pointer to DMA channel object
@@ -738,27 +767,7 @@ unsigned long cppi41_queue_pop(const struct cppi41_queue_obj *queue_obj);
 int cppi41_get_teardown_info(unsigned long addr, u32 *info);
 
 /**
- * cppi41_free_teardown_queue - Pop all teardown descriptors of a given dma
- *                              blocka
- * @dma_num     Number of the DMA block
- *
- * This functions frees all the tear down descriptors in the given dma block.
- */
-void cppi41_free_teardown_queue(int dma_num);
-
-/**
- * cppi41_exit - delete the instance created via cppi41_init()
- */
-void cppi41_exit(void);
-
-/**
- * cppi41_dma_sched_tbl_init - Update the Schedular table with the given data
- *
- * @dmanum      Number of DMa block
- * @qmgr        Queue Manager Number
- * @sch_tbl     Scheduler Table adderss
- * @tblsz       Size of Scheduler table
- *
+ * cppi41_dma_sched_tbl_init
  */
 int cppi41_dma_sched_tbl_init(u8 dma_num, u8 q_mgr,
 				u32 *sched_tbl, u8 tbl_size);
@@ -786,3 +795,8 @@ int cppi41_schedtbl_add_dma_ch(u8 dmanum, u8 qmgr, u8 dma_ch, u8 is_tx);
  * returns      number of channel in schedular table
  */
 int cppi41_schedtbl_remove_dma_ch(u8 dmanum, u8 qmgr, u8 dma_ch, u8 is_tx);
+
+/**
+ * cppi41_free_teardown_queue
+ */
+void cppi41_free_teardown_queue(int dma_num);

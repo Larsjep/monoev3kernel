@@ -42,27 +42,19 @@ struct usb_cppi41_info {
 	u8 q_mgr;
 	u8 num_tx_comp_q;
 	u8 num_rx_comp_q;
-	const u16 *tx_comp_q;
-	const u16 *rx_comp_q;
+	u16 *tx_comp_q;
+	u16 *rx_comp_q;
+	u8 bd_intr_ctrl;
 };
 
-extern const struct usb_cppi41_info usb_cppi41_info;
+extern struct usb_cppi41_info usb_cppi41_info;
 
 /**
  * cppi41_completion - Tx/Rx completion queue interrupt handling hook
  * @musb:	the controller
- * @rx: 	bitmask having bit N set if Rx queue N is not empty
+ * @rx:	bitmask having bit N set if Rx queue N is not empty
  * @tx: 	bitmask having bit N set if Tx completion queue N is not empty
  */
 void cppi41_completion(struct musb *musb, u32 rx, u32 tx);
 
-/**
- * cppi41_disable_sched_rx
- */
-int cppi41_disable_sched_rx(void);
-
-/**
- * cppi41_enable_sched_rx
- */
-int cppi41_enable_sched_rx(void);
 #endif	/* _CPPI41_DMA_H_ */
