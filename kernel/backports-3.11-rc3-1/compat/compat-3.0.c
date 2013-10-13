@@ -12,11 +12,15 @@
 #include <linux/compat.h>
 #include <linux/if_ether.h>
 
+
 #if (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(6,4))
 /* This pulls-in a lot of non-exported symbol backports
  * on kernels older than 2.6.32. There's no harm for not
  * making this available on kernels < 2.6.32. */
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32))
+// leJOS
+#if 0
+// This function does not seem to be defined in the Lego kernel. 
+//#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32))
 #include <linux/pagemap.h>
 #include <linux/shmem_fs.h>
 

@@ -15,6 +15,8 @@
 #include <linux/crypto.h>
 #include <linux/rcupdate.h>
 #include <net/mac80211.h>
+// leJOS
+#include <asm-generic/atomic64.h>
 
 #define NUM_DEFAULT_KEYS 4
 #define NUM_DEFAULT_MGMT_KEYS 2
