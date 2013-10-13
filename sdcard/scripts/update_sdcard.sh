@@ -55,6 +55,16 @@ then
 	sudo cp mod/*.ko "$mount/LMS2012_EXT"/$LJHOME/mod
 	sudo cp version "$mount/LMS2012_EXT"/$LJHOME
 	sudo sh -c "echo $ipaddress > '$mount/LMS2012_EXT'/$LJHOME/bin/netaddress"
+	pushd "$mount/LMS2012_EXT" > /dev/null
+	cd bin
+	sudo ln -s ../$LJHOME/bin/jrun jrun
+	cd ../etc/rc0.d
+	sudo ln -s ../init.d/lejos K09lejos
+	sudo ln -s ../init.d/lejosunload S89lejosunload
+	cd ../rc5.d
+	sudo ln -s ../init.d/dropbear S81dropbear
+	sudo ln -s ../init.d/lejos S98lejos
+	popd > /dev/null
 	sudo rm "$mount/LMS2012_EXT"/var/lib/bluetooth
 	sudo mkdir "$mount/LMS2012_EXT"/var/lib/bluetooth
     	if [ -e $jvm ]

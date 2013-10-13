@@ -1,6 +1,7 @@
 #! /bin/bash
 # Create a set of files to allow the easy creation of leJOS SD card images
 # Created by Andy Shaw
+LJGIT=${LEJOSGIT?"Lejos git repository location LEJOSGIT not set"}
 LJHOME=lejosfs/home/root/lejos
 img=lejosimage
 rm -rf $img 2> /dev/null
@@ -27,11 +28,11 @@ dpkg-deb -x external/libffi* $img/libjna
 cd $img/lejosfs
 dpkg-deb --fsys-tarfile ../../external/bridge-utils* | tar x ./usr/sbin/brctl
 cd ../..
-cp ../ev3classes/ev3classes.jar $img
-cp ../EV3HelloWorld/bin/EV3HelloWorld.class $img/$LJHOME/samples
-cp ../EV3Splash/bin/Splash.class $img/$LJHOME/bin/utils
-cp ../EV3Menu/dist/EV3Menu.jar $img/$LJHOME/bin/utils
-cp ../EV3PowerOff/bin/PowerOff.class $img/$LJHOME/bin/utils
+cp ${LJGIT}/ev3classes/ev3classes.jar $img
+cp ${LJGIT}/EV3HelloWorld/bin/EV3HelloWorld.class $img/$LJHOME/samples
+cp ${LJGIT}/EV3Splash/bin/Splash.class $img/$LJHOME/bin/utils
+cp ${LJGIT}/EV3Menu/dist/EV3Menu.jar $img/$LJHOME/bin/utils
+cp ${LJGIT}/EV3PowerOff/bin/PowerOff.class $img/$LJHOME/bin/utils
 git describe > $img/version
 cp readme $img
 tar cfj lejosimage.bz2 lejosimage
