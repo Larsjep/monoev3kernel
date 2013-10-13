@@ -72,3 +72,6 @@ GTAGS
 *.orig
 *~
 \#*#
+
+# TI specific generated files
+drivers/serial/omapl_pru/pru
