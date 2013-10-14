@@ -44,6 +44,7 @@ then
 	sudo rm -rf $mount/LMS2012_EXT/lib/modules/*
 	sudo cp -r modules/* $mount/LMS2012_EXT/
         sudo cp -r netmods/* "$mount/LMS2012_EXT"/lib/modules/*/kernel/drivers/net/wireless/
+        sudo cp -r firmware/* "$mount/LMS2012_EXT"/
         echo "  ...."force.depmod.on.first.boot
 	sudo rm "$mount/LMS2012_EXT"/lib/modules/*/modules.dep
 

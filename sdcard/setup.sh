@@ -25,6 +25,10 @@ mkdir $img/mod
 cp ../modules/lms2012/bin/* $img/mod
 dpkg-deb -x external/libjna* $img/libjna
 dpkg-deb -x external/libffi* $img/libjna
+dpkg-deb -x external/firmware-brcm80211* $img/firmware
+dpkg-deb -x external/firmware-libertas* $img/firmware
+dpkg-deb -x external/firmware-ralink* $img/firmware
+dpkg-deb -x external/firmware-realtek* $img/firmware
 cd $img/lejosfs
 dpkg-deb --fsys-tarfile ../../external/bridge-utils* | tar x ./usr/sbin/brctl
 cd ../..
