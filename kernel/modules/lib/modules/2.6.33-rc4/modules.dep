@@ -17,9 +17,6 @@ kernel/net/wireless/lib80211_crypt_wep.ko: kernel/net/wireless/lib80211.ko kerne
 kernel/net/wireless/lib80211_crypt_ccmp.ko: kernel/net/wireless/lib80211.ko kernel/compat/compat.ko
 kernel/net/wireless/lib80211_crypt_tkip.ko: kernel/net/wireless/lib80211.ko kernel/compat/compat.ko
 kernel/lib/crc-t10dif.ko:
-kernel/drivers/net/wireless/rtlwifi/rtlwifi.ko: kernel/net/mac80211/mac80211.ko kernel/net/wireless/cfg80211.ko kernel/compat/compat.ko
-kernel/drivers/net/wireless/rtlwifi/rtl8192c/rtl8192c-common.ko:
-kernel/drivers/net/wireless/rtlwifi/rtl8192cu/rtl8192cu.ko: kernel/drivers/net/wireless/rtlwifi/rtl8192c/rtl8192c-common.ko kernel/drivers/net/wireless/rtlwifi/rtlwifi.ko kernel/net/mac80211/mac80211.ko kernel/net/wireless/cfg80211.ko kernel/compat/compat.ko
 kernel/drivers/net/wireless/rtl818x/rtl8187/rtl8187.ko: kernel/net/mac80211/mac80211.ko kernel/net/wireless/cfg80211.ko kernel/compat/compat.ko
 kernel/drivers/net/wireless/ath/carl9170/carl9170.ko: kernel/net/mac80211/mac80211.ko kernel/drivers/net/wireless/ath/ath.ko kernel/net/wireless/cfg80211.ko kernel/compat/compat.ko
 kernel/drivers/net/wireless/ath/ath.ko: kernel/net/wireless/cfg80211.ko kernel/compat/compat.ko

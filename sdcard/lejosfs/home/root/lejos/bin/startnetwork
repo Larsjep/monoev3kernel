@@ -33,9 +33,5 @@ agent -a hci0 1234 &
 # listen for pan connections
 pand --listen --role NAP --devup ${LJBIN}/btup --devdown ${LJBIN}/btdown -sdp
 # Now we start wlan
-# start wpa_supplicant note must use the Lego version not the default system
-${LMS2012_HOME}/sys/wpa_supplicant -B -Dwext -iwlan0 -c/etc/wpa_supplicant.conf
-# get ip address etc.
-echo hostname is ${HOSTNAME}
-udhcpc -i wlan0 -h ${HOSTNAME}
+${LJBIN}/startwlan
 

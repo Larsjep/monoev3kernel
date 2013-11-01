@@ -35,6 +35,7 @@ then
 
         echo "  ...."copying.filesystem.to.sdcard
 	sudo tar -C "$mount/LMS2012_EXT" -jxf lmsfs.tar.bz2 
+	sudo rm "$mount/LMS2012_EXT"/etc/mtab
         sync
 
         echo "  ...."copying.application.to.sdcard
@@ -71,7 +72,9 @@ then
     	if [ -e $jvm ]
     	then
         	echo "  ....  "Java
-		sudo tar -C "$mount/LMS2012_EXT/$LJHOME" -axf $jvm 
+		#sudo tar -C "$mount/LMS2012_EXT/$LJHOME" -axf $jvm 
+		sudo cp $jvm "$mount/LMS2012/"
+		#sudo echo $jvm "$mount/LMS2012_EXT/$LJHOME"/jrever
         else
                 echo "   WARNING: file $jvm does not exist"
 	fi

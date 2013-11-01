@@ -1,0 +1,29 @@
+#! /bin/sh
+. /etc/default/lejos
+# check for a newer version of java on the dos  part of the sdcard
+mkdir /media/card 2> /dev/null
+mount /dev/mmcblk0p1 /mnt/card
+cd /mnt/card
+newjre=$(echo ejre*)
+if [ -f $newjre ];
+then
+  curjre=$(cat ${LEJOS_HOME}/jrever) 2>/dev/null
+  echo "current jre $curjre new jre $newjre"
+  if [ "${newjre}" != "${curjre}" ];
+  then
+    echo "delete existing jre"
+    rm -rf ${LEJOS_HOME}/ejre* 2> /dev/null
+    echo "extracting jre"
+    tar -C ${LEJOS_HOME} -zxf ${newjre}
+    echo ${newjre} > ${LEJOS_HOME}/jrever
+    rm ${LEJOS_HOME}/jreopt
+  fi
+fi
+cd ${LEJOS_HOME}
+umount /mnt/card
+if [ ! -f jreopt ];
+then
+  echo "optimize java" 
+  jrun -client -Xshare:dump
+  touch jreopt
+fi

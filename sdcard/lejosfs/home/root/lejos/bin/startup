@@ -2,6 +2,8 @@
 . /etc/default/lejos
 echo "Start Network"
 ${LEJOS_HOME}/bin/startnetwork
+# perform updates if needed
+${LEJOS_HOME}/bin/updatejre
 #echo "Mount dev system"
 #busybox mount -t nfs -o nolock legovm:/export/lejos /home/lejos
 # show lejos splash, while modules load
