@@ -674,7 +674,6 @@ IICSTR    IicStrings[INPUTS];
 static    struct hrtimer Device1Timer;
 static    ktime_t        Device1Time;
 
-
 static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
 {
   UBYTE   Port;
@@ -685,7 +684,6 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
 
   for (Port = 0;Port < NO_OF_IIC_PORTS;Port++)
   { // look at one port at a time
-
     switch (IicPort[Port].State)
     { // Main state machine
 
@@ -716,12 +714,18 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
       { // Initialise port variables
 
         IicPortEnable(Port);
-
+        Tmp = IicPort[Port].Mode;
         IicPort[Port]               =  IicPortDefault;
 
         IicPort[Port].Timer         =  0;
-
-        IicPort[Port].State         =  IIC_NXT_TEMP_START;
+        if (Tmp == 255)
+        {
+          IicPort[Port].Mode        = 255;
+          IicPort[Port].Initialised = 1;
+          IicPort[Port].State       =  IIC_WAITING;
+        }
+        else
+          IicPort[Port].State       =  IIC_NXT_TEMP_START;
       }
       break;
 
@@ -1025,7 +1029,6 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
       {
         if (IicPortReceive(Port,TmpBuffer) != BUSY)
         {
-
 #ifndef DISABLE_FAST_DATALOG_BUFFER
           if (IicPort[Port].InLength > 1)
           {
@@ -1089,7 +1092,6 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
             (*pIic).Raw[Port][1]  =  0;
           }
 #endif
-
           (*pIic).Status[Port]     |=  IIC_DATA_READY;
           IicPort[Port].State       =  IIC_REPEAT;
           if (IicPort[Port].Repeat != 0)
@@ -1193,13 +1195,14 @@ static int Device1Ioctl(struct inode *pNode, struct file *File, unsigned int Req
 #endif
             IicConfigured[Port]        =  1;
             IicPortType[Port]          =  (*pDevCon).Type[Port];
+            IicPort[Port].Mode         = (*pDevCon).Mode[Port];
             IicPort[Port].State        =  IIC_INIT;
           }
           else
           {
             if (IicPort[Port].Initialised)
             {
-              if (IicPort[Port].Mode != (*pDevCon).Mode[Port])
+              if (IicPort[Port].Mode != (UBYTE)((*pDevCon).Mode[Port]))
               {
 #ifdef DEBUG_TRACE_MODE_CHANGE
 //                printk("d_iic  %d   Device1Ioctl: Changing to    %c\n",Port,(*pDevCon).Mode[Port] + '0');
