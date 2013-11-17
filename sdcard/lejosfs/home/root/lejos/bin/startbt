@@ -1,0 +1,22 @@
+#! /bin/sh
+# run this command with a single parameter that is the pin to use for pairing
+. /etc/default/lejos
+LJBIN=${LEJOS_HOME}/bin
+NETADDRESS=`cat ${LJBIN}/netaddress`
+HOSTNAME=`hostname`
+# set default pin in none specified
+pin=${1:-1234} 
+# terminate any running servers
+killall agent pand 2> /dev/null
+# give things time to notice they have gone
+sleep 5
+# configure Bluetooth
+hciconfig hci0 lm MASTER
+hciconfig hci0 name ${HOSTNAME}
+# make us discoverable
+hciconfig hci0 piscan
+# set pin
+agent -a hci0 ${pin} &
+# listen for pan connections
+pand --listen --role NAP --devup ${LJBIN}/btup --devdown ${LJBIN}/btdown -sdp
+

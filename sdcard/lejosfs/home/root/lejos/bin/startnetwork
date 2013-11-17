@@ -24,14 +24,8 @@ brctl addif br0 usb0
 route add default gw ${NETADDRESS}0 br0
 # start dhcpd
 udhcpd ${LJBIN}/udhcpd.conf
-# configure Bluetooth
-hciconfig hci0 lm MASTER
-# make us discoverable
-hciconfig hci0 piscan
-# set default pin
-agent -a hci0 1234 &
-# listen for pan connections
-pand --listen --role NAP --devup ${LJBIN}/btup --devdown ${LJBIN}/btdown -sdp
+# configure and start bluetooth using default pin
+${LJBIN}/startbt
 # Now we start wlan
 ${LJBIN}/startwlan
 
