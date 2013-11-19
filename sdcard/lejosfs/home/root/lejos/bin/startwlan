@@ -13,10 +13,10 @@ killall wpa_supplicant udhcpc 2> /dev/null
 if [ -f ${LJBIN}/utils/wpa_supplicant.conf ];
 then
   echo "using lejos config"
-  ${LMS2012_HOME}/sys/wpa_supplicant -B -Dwext -iwlan0 -c${LJBIN}/utils/wpa_supplicant.conf
+  ${LJBIN}/wpa_supplicant -B -Dwext -iwlan0 -c${LJBIN}/utils/wpa_supplicant.conf
 else
   echo "using system default"
-  ${LMS2012_HOME}/sys/wpa_supplicant -B -Dwext -iwlan0 -c/etc/wpa_supplicant.conf
+  ${LJBIN}/wpa_supplicant -B -Dwext -iwlan0 -c/etc/wpa_supplicant.conf
 fi
 # get ip address etc.
 echo hostname is ${HOSTNAME}

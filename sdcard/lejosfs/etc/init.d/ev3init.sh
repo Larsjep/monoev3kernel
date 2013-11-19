@@ -1,25 +1,5 @@
 #!/bin/sh
-
-
-echo "Setting up VirtualDrive...";
-mount -t tmpfs tmpfs /mnt/tmpdisk/ -o size=4M
-dd if=/dev/mtd4 of=/mnt/tmpdisk/data.tgz bs=64k > /dev/null 2>&1
-tar -xzf /mnt/tmpdisk/data.tgz -C /mnt/ramdisk/ > /dev/null 2>&1
-umount /mnt/tmpdisk/
-if [ ! -d /mnt/ramdisk/settings ]; then
-  tar -xzf /etc/def_sett.tgz -C /mnt/ramdisk/
-  echo "Default Settings in use..."
-fi
-
-#Read name from filesystem + update hostname 
-NAME="EV3"
-while read LINE
-do
-    echo $LINE
-    NAME=$LINE
-#done < "/home/root/lms2012/sys/settings/BrickName"
-done < "/mnt/ramdisk/settings/BrickName"
-hostname $NAME
+cat /home/root/lejos/bin/images/startup.ev3i > /dev/fb
 bluetoothd -n > /dev/null 2>&1 &
 
 echo "Initialize Bluetooth..."
@@ -32,11 +12,11 @@ Hw1=${Hw1//[[:space:]]}
 Hw2=${Hw2//[[:space:]]}
 
 if [ $((Hw1 ^ Hw2)) == 255 ]; then
-  echo -e "HwId="${Hw1//0x/} > /home/root/lms2012/sys/settings/HwId
+  echo -e "HwId="${Hw1//0x/} > /var/volatile/HwId
   adr=$(eeprog /dev/i2c-1 0x50 -16 -r 0x3F06:6 -x -f -q)
   STRING=${adr//3f06| /}
 else
-  echo -e "HwId=03" > /home/root/lms2012/sys/settings/HwId
+  echo -e "HwId=03" > /var/volatile/HwId
   adr=$(eeprog /dev/i2c-1 0x50 -16 -r 0x3F00:6 -x -f -q)
   STRING=${adr//3f00| /}
 fi
@@ -44,7 +24,7 @@ fi
 # OPTIMIZE THIS SECTION
 
 #Save Bluetooth address in file
-echo -e ${STRING//[[:space:]]} > /home/root/lms2012/sys/settings/BTser
+echo -e ${STRING//[[:space:]]} > /var/volatile/BTser
 
 #Remove first 2 spaces
 STRING=${STRING/  /}

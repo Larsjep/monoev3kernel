@@ -38,9 +38,6 @@ then
 	sudo rm "$mount/LMS2012_EXT"/etc/mtab
         sync
 
-        echo "  ...."copying.application.to.sdcard
-        sudo cp -r Linux_AM1808/* "$mount/LMS2012_EXT"/home/root/lms2012
-
         echo "  ...."copying.extra.modules.to.sdcard
 	sudo rm -rf $mount/LMS2012_EXT/lib/modules/*
 	sudo cp -r modules/* $mount/LMS2012_EXT/
@@ -50,10 +47,11 @@ then
 	sudo rm "$mount/LMS2012_EXT"/lib/modules/*/modules.dep
 
         echo "  ...."copying.lejos.to.sdcard
+        sudo rm -rf "$mount/LMS2012_EXT"/home/root/lms2012
         sudo cp -r lejosfs/* "$mount/LMS2012_EXT"
 	sudo cp wpa_supplicant.conf "$mount/LMS2012_EXT"/etc
 	sudo cp ev3classes.jar "$mount/LMS2012_EXT"/$LJHOME/lib
-	sudo cp Linux_AM1808/sys/mod/*.ko "$mount/LMS2012_EXT"/$LJHOME/mod
+	sudo cp dbusjava.jar "$mount/LMS2012_EXT"/$LJHOME/lib
 	sudo cp mod/*.ko "$mount/LMS2012_EXT"/$LJHOME/mod
 	sudo cp version "$mount/LMS2012_EXT"/$LJHOME
 	sudo sh -c "echo $ipaddress > '$mount/LMS2012_EXT'/$LJHOME/bin/netaddress"
