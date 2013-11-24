@@ -6,6 +6,7 @@ LJHOME=lejosfs/home/root/lejos
 img=lejosimage
 rm -rf $img 2> /dev/null
 mkdir $img 2> /dev/null
+mkdir lejosfs/home/lejos 2> /dev/null
 mkdir lejosfs/home/lejos/programs 2> /dev/null
 mkdir $LJHOME/lib 2> /dev/null
 mkdir $LJHOME/libjna 2> /dev/null
@@ -40,6 +41,6 @@ cp ${LJGIT}/EV3HelloWorld/bin/EV3HelloWorld.class $img/$LJHOME/samples
 cp ${LJGIT}/EV3Menu/dist/EV3Menu.jar $img/$LJHOME/bin/utils
 cp ${LJGIT}/EV3Menu/src/wpa_supplicant.txt $img/$LJHOME/bin/utils
 #cp ${LJGIT}/EV3PowerOff/bin/PowerOff.class $img/$LJHOME/bin/utils
-git describe > $img/version
+git describe > $img/version 2> /dev/null
 cp readme $img
 tar cfj lejosimage.bz2 lejosimage

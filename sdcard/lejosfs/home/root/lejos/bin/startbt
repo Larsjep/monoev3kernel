@@ -4,8 +4,10 @@
 LJBIN=${LEJOS_HOME}/bin
 NETADDRESS=`cat ${LJBIN}/netaddress`
 HOSTNAME=`hostname`
-# set default pin in none specified
-pin=${1:-1234} 
+# set default pin if none specified
+defpin=`cat /etc/bluetooth/btpin 2> /dev/null`
+pin=${1:-$defpin} 
+pin=${pin:-1234}
 # terminate any running servers
 killall agent pand 2> /dev/null
 # give things time to notice they have gone
