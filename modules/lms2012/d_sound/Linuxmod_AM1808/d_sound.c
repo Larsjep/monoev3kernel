@@ -522,6 +522,7 @@ static void Device1TimerExit(void)
 {
   Device1TimerCancel();
 }
+static UWORD   PwmLevel;
 
 static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
 {
@@ -548,13 +549,19 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
 
                             if(SoundChunkSize[BufferReadIndex] > 0) // Anything to use in Buffers?
                             {
+                              int lev;
                               // Get raw sample
                               TempLevel = SoundBuffers[BufferReadIndex][BufferReadPointer++];
+                              lev = (int)(TempLevel & 0xff) - 128;
+                              lev = lev*Level*8/100 + 128*8;
+                              if (lev <= 0) lev = 1;
+                              TempLevel = lev;
                               if(TempLevel == 0) TempLevel++;
-                              // Add volume i.e. scale the PWM level
-
-                              TempLevel = (UWORD)(Level * TempLevel);
-                              SETSoundLevel(TempLevel);
+                              if (PwmLevel != TempLevel)
+                              {
+                                  SETSoundLevel(TempLevel);
+                                  PwmLevel = TempLevel;
+                              }
 
                               SoundChunkSize[BufferReadIndex]--;
 
@@ -603,12 +610,14 @@ static void Device1TimerInit8KHz(void)
     Device1TimerStart();              // Start / reStart
 }
 
+
 static ssize_t Device1Write(struct file *File, const char *Buffer, size_t Count, loff_t *Data)
 {
 
     char    CommandBuffer[SOUND_FILE_BUFFER_SIZE + 1];	// Space for command @ byte 0
     UWORD   Frequency;
-    UWORD   PwmLevel;
+    UWORD   newPeriod;
+    UWORD   newPwmLevel;
     int		BytesWritten = 0;
     int 	i = 0;
 
@@ -633,6 +642,45 @@ static ssize_t Device1Write(struct file *File, const char *Buffer, size_t Count,
           	  	  	  	break;
 
       case TONE:
+    	                if (TimerMode == ONE_SHOT)
+    	                {
+                            Level = CommandBuffer[1];
+                            Frequency = (UWORD)(CommandBuffer[2] + (CommandBuffer[3] << 8));
+                            Duration = (UWORD) (CommandBuffer[4] + (CommandBuffer[5] << 8));
+
+                            if (Frequency < SOUND_MIN_FRQ)
+                            {
+                              Frequency = SOUND_MIN_FRQ;
+                            }
+                            else if (Frequency > SOUND_MAX_FRQ)
+                            {
+                              Frequency = SOUND_MAX_FRQ;
+                            }
+
+                            newPeriod = (UWORD)((SOUND_TONE_MASTER_CLOCK / Frequency) - 1);
+                            if (newPeriod != Period)
+                            {
+                            	Period = newPeriod;
+                            	SETPwmPeriod(Period);
+                            }
+
+                            if (Level > 100) Level = 100;
+
+                            newPwmLevel = (UWORD)(((ulong)(Period) * (ulong)(Level)) /(ulong)((200*100)/16)) + 1; // Level from % to ticks (Duty Cycle)
+                            if(newPwmLevel != PwmLevel)
+                            {
+                            	PwmLevel = newPwmLevel;
+                            	SETSoundLevel(PwmLevel);
+                            }
+                            if(Duration > 0)  // Infinite or specific?
+                            {
+                              Device1TimerInitDuration();
+                              TimerMode = ONE_SHOT;
+                            }
+                            else
+                              TimerMode = MANUAL;
+                            break;
+    	                }
     	  	  	  	    SOUNDDisable;
                         SOUNDPwmModuleSetupTone;
                         Level = CommandBuffer[1];
@@ -653,7 +701,7 @@ static ssize_t Device1Write(struct file *File, const char *Buffer, size_t Count,
 
                         if (Level > 100) Level = 100;
 
-                        PwmLevel = (UWORD)(((ulong)(Period) * (ulong)(Level)) /(ulong)(200)); // Level from % to ticks (Duty Cycle)
+                        PwmLevel = (UWORD)(((ulong)(Period) * (ulong)(Level)) /(ulong)((200*100)/16)) + 1; // Level from % to ticks (Duty Cycle)
 
                         SETSoundLevel(PwmLevel);
 
@@ -679,7 +727,7 @@ static ssize_t Device1Write(struct file *File, const char *Buffer, size_t Count,
                       Period = (UWORD)(SOUND_MASTER_CLOCK / 64000); // 64 KHz => 8 shots of each sample
       	  	  	  	  SETPwmPeriod(Period);                         // helps filtering
 
-    	  	  	  	    BufferWriteIndex = 0;		// Reset to first ring Buffer
+    	  	  	  	  BufferWriteIndex = 0;		// Reset to first ring Buffer
       	  	  	  	  BufferReadIndex = 0;		// -
       	  	  	  	  BufferReadPointer = 0;	// Ready for very first sample
       	  	  	  	  for (i = 0; i < SOUND_BUFFER_COUNT; i++)
