@@ -72,7 +72,7 @@
 					<folderInfo id="cdt.managedbuild.toolchain.gnu.base.339558517.1665416902.1078018496.1576075957." name="/" resourcePath="">
 						<toolChain id="cdt.managedbuild.toolchain.gnu.base.177785814" name="cdt.managedbuild.toolchain.gnu.base" superClass="cdt.managedbuild.toolchain.gnu.base">
 							<targetPlatform archList="all" binaryParser="org.eclipse.cdt.core.ELF" id="cdt.managedbuild.target.gnu.platform.base.2037366924" name="Debug Platform" osList="linux,hpux,aix,qnx" superClass="cdt.managedbuild.target.gnu.platform.base"/>
-							<builder arguments="d_pwm" autoBuildTarget="all" buildPath="${workspace_loc}/d_pwm/${ConfigName}" cleanBuildTarget="clean" command="${workspace_loc}/d_pwm/${ConfigName}/buildmod" enableAutoBuild="false" enableCleanBuild="true" enabledIncrementalBuild="true" id="cdt.managedbuild.target.gnu.builder.base.1252980880" incrementalBuildTarget="all" keepEnvironmentInBuildfile="false" managedBuildOn="false" name="Gnu Make Builder" parallelizationNumber="1" superClass="cdt.managedbuild.target.gnu.builder.base"/>
+							<builder arguments="d_pwm" autoBuildTarget="all" buildPath="${ProjDirPath}/${ConfigName}" cleanBuildTarget="clean" command="${ProjDirPath}/${ConfigName}/buildmod" enableAutoBuild="false" enableCleanBuild="true" enabledIncrementalBuild="true" id="cdt.managedbuild.target.gnu.builder.base.1252980880" incrementalBuildTarget="all" keepEnvironmentInBuildfile="false" managedBuildOn="false" name="Gnu Make Builder" superClass="cdt.managedbuild.target.gnu.builder.base"/>
 							<tool id="cdt.managedbuild.tool.gnu.archiver.base.1009109222" name="GCC Archiver" superClass="cdt.managedbuild.tool.gnu.archiver.base"/>
 							<tool id="cdt.managedbuild.tool.gnu.cpp.compiler.base.1048688032" name="GCC C++ Compiler" superClass="cdt.managedbuild.tool.gnu.cpp.compiler.base"/>
 							<tool id="cdt.managedbuild.tool.gnu.c.compiler.base.2018073018" name="GCC C Compiler" superClass="cdt.managedbuild.tool.gnu.c.compiler.base">
@@ -362,4 +362,12 @@
 		</scannerConfigBuildInfo>
 	</storageModule>
 	<storageModule moduleId="org.eclipse.cdt.core.LanguageSettingsProviders"/>
+	<storageModule moduleId="refreshScope" versionNumber="2">
+		<configuration configurationName="Linuxmod_AM1808">
+			<resource resourceType="PROJECT" workspacePath="/d_pwm"/>
+		</configuration>
+		<configuration configurationName="Linuxmod_X86">
+			<resource resourceType="PROJECT" workspacePath="/d_pwm"/>
+		</configuration>
+	</storageModule>
 </cproject>
