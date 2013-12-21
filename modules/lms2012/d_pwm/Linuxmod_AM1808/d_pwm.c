@@ -35,7 +35,7 @@ int       HwInvBits  =  0;
 #define   DEVICE2_NAME                  MOTOR_DEVICE
 
 
-#define   SOFT_TIMER_MS                 2
+#define   SOFT_TIMER_MS                 4
 #define   SOFT_TIMER_SETUP              (SOFT_TIMER_MS * 1000000)
 
 /*
@@ -47,11 +47,7 @@ int       HwInvBits  =  0;
 #define   MAX_PWM_CNT                   (10000)
 #define   MAX_SPEED                     (100)
 #define   SPEED_PWMCNT_REL              (100) //(MAX_PWM_CNT/MAX_SPEED)
-#define   RAMP_FACTOR                   (1000)
-#define   MAX_SYNC_MOTORS               (2)
 
-//#define   COUNTS_PER_PULSE_LM           25600L
-//#define   COUNTS_PER_PULSE_MM           16200L
 
 #define   COUNTS_PER_PULSE_LM           12800L
 #define   COUNTS_PER_PULSE_MM           8100L
@@ -221,34 +217,45 @@ typedef   struct
   SLONG   TimeCnt;
   SLONG   TimeInc;
   SLONG   OldTachoCnt;
-  SLONG   TachoCntUp;
-  SLONG   TachoCntConst;
-  SLONG   TachoCntDown;
-  SLONG   RampUpFactor;
-  SLONG   RampUpOffset;
-  SLONG   RampDownFactor;
-  SLONG   PVal;
-  SLONG   IVal;
-  SLONG   DVal;
-  SLONG   OldSpeedErr;
   SLONG   Power;
   SLONG   TargetPower;
   SLONG   Dir;
-  SBYTE   Speed;
-  SBYTE   TargetSpeed;
-  SBYTE   TargetBrake;
-  UBYTE   BrakeAfter;
-  UBYTE   LockRampDown;
-  SBYTE   Pol;
+  SLONG   moveP;
+  SLONG   moveI;
+  SLONG   moveD;
+  SLONG   holdP;
+  SLONG   holdI;
+  SLONG   holdD;
+  SLONG   tachoCnt;
+  SLONG   baseTime;
+  SLONG   curCnt;
+  SLONG   curTargetVelocity;
+  SLONG   curAcc;
+  SLONG   curVelocity;
+  SLONG   curStopAcc;
+  SLONG   accTime;
+  SLONG   accCnt;
+  SLONG   baseCnt;
+  SLONG   baseVelocity;
+  SLONG   curLimit;
+  SLONG   basePower;
+  SLONG   err1;
+  SLONG   err2;
+  SLONG   stallCnt;
+  SLONG   stallLimit;
+  SLONG   stallTime;
+
+  UBYTE   moving;
+  UBYTE   checkLimit;
+  UBYTE   curHold;
   UBYTE   Direction;
   UBYTE   Type;
   UBYTE   State;
   UBYTE   TargetState;
   UBYTE   Owner;
   UBYTE   Mutex;
-  UBYTE   DirChgPtr;
-  SWORD   TurnRatio;
 }MOTOR;
+
 
 
 typedef   struct
@@ -267,10 +274,7 @@ static    irqreturn_t IntB (int irq, void * dev);
 static    irqreturn_t IntC (int irq, void * dev);
 static    irqreturn_t IntD (int irq, void * dev);
 
-UBYTE     dCalculateSpeed(UBYTE No, SBYTE *pSpeed);
 void      SetGpioRisingIrq(UBYTE PinNo, irqreturn_t (*IntFuncPtr)(int, void *));
-void      GetSyncDurationCnt(SLONG *pCount0, SLONG *pCount1);
-void      CheckforEndOfSync(void);
 
 
 void      SetDutyMA(ULONG Duty);
@@ -492,32 +496,20 @@ static    UWORD   *eCAP1;
 static    ULONG   *TIMER64P3;
 
 static    MOTOR   Motor[NO_OF_OUTPUT_PORTS];
-static    SLONG   *(StepPowerSteps[NO_OF_OUTPUT_PORTS]);
-static    SLONG   *(TachoSteps[NO_OF_OUTPUT_PORTS])  =  {&(Motor[0].TachoCnt),&(Motor[1].TachoCnt),&(Motor[2].TachoCnt),&(Motor[3].TachoCnt)};
-static    SLONG   *(TimerSteps[NO_OF_OUTPUT_PORTS])  =  {&(Motor[0].TimeCnt),&(Motor[1].TimeCnt),&(Motor[2].TimeCnt),&(Motor[3].TimeCnt)};
 
 static    void    (*SetDuty[NO_OF_OUTPUT_PORTS])(ULONG)  = {SetDutyMA,SetDutyMB,SetDutyMC,SetDutyMD};
 
-static    TACHOSAMPLES    TachoSamples[NO_OF_OUTPUT_PORTS];
 static    UBYTE           ReadyStatus = 0;
 static    UBYTE           TestStatus  = 0;
 
 static    MOTORDATA       MotorData[NO_OF_OUTPUT_PORTS];
 static    MOTORDATA       *pMotor = MotorData;
 
-static    ULONG           TimeOutSpeed0[NO_OF_OUTPUT_PORTS];
-static    UBYTE           MinRegEnabled[NO_OF_OUTPUT_PORTS];
 
-static    UBYTE           SyncMNos[MAX_SYNC_MOTORS];
-static    SBYTE           MaxSyncSpeed;
 
 static    struct hrtimer  Device1Timer;
 static    ktime_t         Device1Time;
 
-static    UBYTE           PrgStopTimer[NO_OF_OUTPUT_PORTS];
-
-
-static    ULONG    CountsPerPulse[4]     = {COUNTS_PER_PULSE_LM, COUNTS_PER_PULSE_LM, COUNTS_PER_PULSE_LM, COUNTS_PER_PULSE_LM};
 
 /*! \page PwmModule
  *
@@ -537,14 +529,7 @@ static    ULONG    CountsPerPulse[4]     = {COUNTS_PER_PULSE_LM, COUNTS_PER_PULS
  *  Medium motor reaction time is much faster than large motor due to smaller motor
  *  and smaller gearbox
  */
-static    UBYTE    SamplesMediumMotor[NO_OF_SAMPLE_STEPS] = {2, 4,  8,  16};
-static    UBYTE    SamplesLargeMotor[NO_OF_SAMPLE_STEPS]  = {4, 16, 32, 64};
-//static    UBYTE    SamplesMediumMotor[NO_OF_SAMPLE_STEPS] = {1, 2,  4,  8};
-//static    UBYTE    SamplesLargeMotor[NO_OF_SAMPLE_STEPS]  = {2, 8, 16, 32};
-static    UBYTE    *SamplesPerSpeed[NO_OF_OUTPUT_PORTS]   = {SamplesLargeMotor, SamplesLargeMotor, SamplesLargeMotor, SamplesLargeMotor};
 
-static    UBYTE    AVG_TACHO_COUNTS[NO_OF_OUTPUT_PORTS]   = {2,2,2,2};
-static    ULONG    AVG_COUNTS[NO_OF_OUTPUT_PORTS]         = {(2 * COUNTS_PER_PULSE_LM),(2 * COUNTS_PER_PULSE_LM),(2 * COUNTS_PER_PULSE_LM),(2 * COUNTS_PER_PULSE_LM)};
 
 
 /*
@@ -576,53 +561,11 @@ static    ULONG    AVG_COUNTS[NO_OF_OUTPUT_PORTS]         = {(2 * COUNTS_PER_PUL
 
 #define   SETMotorType(Port, NewType)   {\
                                           Motor[Port].Type = NewType;\
-                                          if (TYPE_MINITACHO == NewType)\
-                                          {\
-                                            CountsPerPulse[Port]      =  COUNTS_PER_PULSE_MM;\
-                                            SamplesPerSpeed[Port]     = SamplesMediumMotor;\
-                                          }\
-                                          else\
-                                          {\
-                                            CountsPerPulse[Port]      =  COUNTS_PER_PULSE_LM;\
-                                            SamplesPerSpeed[Port]     =  SamplesLargeMotor;\
-                                          }\
-                                        }
+                                      }
 
-#define   SETAvgTachoCount(Port, Speed) {\
-                                          if (Speed > 80)\
-                                          {\
-                                            AVG_TACHO_COUNTS[Port] = SamplesPerSpeed[Port][3];\
-                                            AVG_COUNTS[Port]       = SamplesPerSpeed[Port][3] * CountsPerPulse[Port];\
-                                          }\
-                                          else\
-                                          {\
-                                            if (Speed > 60)\
-                                            {\
-                                              AVG_TACHO_COUNTS[Port] = SamplesPerSpeed[Port][2];\
-                                              AVG_COUNTS[Port]       = SamplesPerSpeed[Port][2] * CountsPerPulse[Port];\
-                                            }\
-                                            else\
-                                            {\
-                                              if (Speed > 40)\
-                                              {\
-                                                AVG_TACHO_COUNTS[Port] = SamplesPerSpeed[Port][1];\
-                                                AVG_COUNTS[Port]       = SamplesPerSpeed[Port][1] * CountsPerPulse[Port];\
-                                              }\
-                                              else\
-                                              {\
-                                                AVG_TACHO_COUNTS[Port] = SamplesPerSpeed[Port][0];\
-                                                AVG_COUNTS[Port]       = SamplesPerSpeed[Port][0] * CountsPerPulse[Port];\
-                                              }\
-                                            }\
-                                          }\
-                                        }
 
 #define   FREERunning24bittimer         ((ULONG)((((ULONG*)(TIMER64P3))[TIM34])>>8))
 
-#define   CLEARTachoArray(No)           {\
-                                          Motor[No].DirChgPtr = 0;\
-                                          memset(&TachoSamples[No], 0, sizeof(TACHOSAMPLES));\
-                                        }
 
 #define   OutputFloat(port,pin)         {\
                                           (*pOutputPortPin[Hw][(port * OUTPUT_PORT_PINS) + pin].pGpio).dir |=  pOutputPortPin[Hw][(port * OUTPUT_PORT_PINS) + pin].Mask;\
@@ -705,6 +648,42 @@ static    ULONG    AVG_COUNTS[NO_OF_OUTPUT_PORTS]         = {(2 * COUNTS_PER_PUL
 #define   READIntC                      OutputRead(2,INT)
 #define   READIntD                      OutputRead(3,INT)
 
+#define FIX_SCALE 256
+#define FIX_SHIFT 8
+
+static SLONG intToFix(SLONG i)
+{
+    return i << FIX_SHIFT;
+}
+
+
+static SLONG FixMult(SLONG a, SLONG b)
+{
+    return (a*b) >> FIX_SHIFT;
+}
+
+static SLONG FixDiv(SLONG a, SLONG b)
+{
+    return (a << FIX_SHIFT)/b;
+}
+
+static SLONG FixRound(SLONG a)
+{
+    return (a > 0 ?(a+FIX_SCALE/2) >> FIX_SHIFT : (a-FIX_SHIFT/2) >> FIX_SHIFT);
+}
+
+static SLONG FixAbs(SLONG i)
+{
+	return (i > 0 ? i : -i);
+}
+#define INT_TO_FIX(i) (i << FIX_SHIFT)
+static SLONG STOP_LIMIT = INT_TO_FIX(2);
+static SLONG F_SMOOTH1 = INT_TO_FIX(375)/1000;
+static SLONG F_SMOOTH2 = INT_TO_FIX(625)/1000;
+static SLONG S_SMOOTH1 = INT_TO_FIX(750)/1000;
+static SLONG S_SMOOTH2 = INT_TO_FIX(250)/1000;
+static SLONG MAX_POWER = INT_TO_FIX(100);
+#define NO_LIMIT 0x7fffffff
 
 /*
  * Functions
@@ -722,48 +701,6 @@ void      CheckSpeedPowerLimits(SBYTE *pCheckVal)
 }
 
 
-UBYTE     CheckLessThanSpecial(SLONG Param1, SLONG Param2, SLONG Inv)
-{
-  UBYTE   RtnVal = FALSE;
-
-  if ((Param1 * Inv) < (Param2 * Inv))
-  {
-    RtnVal = TRUE;
-  }
-  return(RtnVal);
-}
-
-
-void      IncSpeed(SBYTE Dir, SBYTE *pSpeed)
-{
-  if ((NON_INV == Dir) && (MAX_SPEED > *pSpeed))
-  {
-    (*pSpeed)++;
-  }
-  else
-  {
-    if ((INV == Dir) && (-MAX_SPEED < *pSpeed))
-    {
-      (*pSpeed)--;
-    }
-  }
-}
-
-
-void      DecSpeed(SBYTE Dir, SBYTE *pSpeed)
-{
-  if ((NON_INV == Dir) && (0 < *pSpeed))
-  {
-    (*pSpeed)--;
-  }
-  else
-  {
-    if ((INV == Dir) && (0 > *pSpeed))
-    {
-      (*pSpeed)++;
-    }
-  }
-}
 
 
 void      SetDirRwd(UBYTE Port)
@@ -854,55 +791,6 @@ void      SetPower(UBYTE Port, SLONG Power)
 }
 
 
-void      SetRegulationPower(UBYTE Port, SLONG Power)
-{
-  if (MAX_PWM_CNT < Power)
-  {
-    Power             = MAX_PWM_CNT;
-    Motor[Port].Power = Power;
-  }
-  if (-MAX_PWM_CNT > Power)
-  {
-    Power             = -MAX_PWM_CNT;
-    Motor[Port].Power = Power;
-  }
-
-  if (TYPE_MINITACHO == Motor[Port].Type)
-  {
-    // Medium Motor
-    if (0 != Power)
-    {
-      if (0 < Power)
-      {
-        SetDirFwd(Port);
-      }
-      else
-      {
-        SetDirRwd(Port);
-        Power = 0 - Power;
-      }
-      Power = ((Power * 9000)/10000) + 1000;
-    }
-  }
-  else
-  {
-    // Large motor
-    if (0 != Power)
-    {
-      if (0 < Power)
-      {
-        SetDirFwd(Port);
-      }
-      else
-      {
-        SetDirRwd(Port);
-        Power = 0 - Power;
-      }
-      Power = ((Power * 10000)/10000) + 0;
-    }
-  }
-  SetDuty[Port](Power);
-}
 
 
 void      SetDutyMA(ULONG Duty)
@@ -922,502 +810,14 @@ void      SetDutyMD(ULONG Duty)
   eCAP0[CAP2]   = Duty;
 }
 
-
-void      ClearPIDParameters(UBYTE No)
-{
-  Motor[No].PVal        = 0;
-  Motor[No].IVal        = 0;
-  Motor[No].DVal        = 0;
-  Motor[No].OldSpeedErr = 0;
-}
-
-
-/*! \page PwmModule
- *
- *  <hr size="1"/>
- *  <b>     write </b>
- *
- */
-/*! \brief    StepPowerStopMotor
- *
- *  Helper function
- *  Checks how the motor should stop
- *
- *  Parameters:
- *  No: The motor number
- *  AdjustTachoValue: The value that the tacho should be decremented
- *
- */
-void    StepPowerStopMotor(UBYTE No, SLONG AdjustTachoValue)
-{
-  *StepPowerSteps[No] -= AdjustTachoValue;
-  SetPower(No, 0);                // Don't destroy power level if next command needs to use it
-  if (Motor[No].TargetBrake)
-  {
-    if (StepPowerSteps[No] != &(Motor[No].TachoCnt))
-    {
-      // To be able to brake at tacho = 0 if this was timed command
-      Motor[No].TachoCnt = 0;
-    }
-    Motor[No].State  = BRAKED;
-  }
-  else
-  {
-    Motor[No].State  = IDLE;
-    SetCoast(No);
-  }
-  Motor[No].TargetState = UNLIMITED_UNREG;  // Default motor startup
-
-  // If this was a synced motor then clear it
-  if (SyncMNos[0] == No)
-  {
-    SyncMNos[0] = UNUSED_SYNC_MOTOR;
-  }
-  if (SyncMNos[1] == No)
-  {
-    SyncMNos[1] = UNUSED_SYNC_MOTOR;
-  }
-  ReadyStatus &= ~(0x01 << No);             // Clear ready flag
-  TestStatus  &= ~(0x01 << No);             // Clear ready flag
-}
-
-
-/*! \page PwmModule
- *
- *  <hr size="1"/>
- *  <b>     write </b>
- *
- */
-/*! \brief    StepSpeedCheckTachoCntUp
- *
- *  Helper function
- *  Checks if step power should have a Count up sequence
- *
- *  Parameters:
- *  No: The motor number
- *
- */
-UBYTE    StepSpeedCheckTachoCntUp(UBYTE No)
-{
-  UBYTE  Return;
-  SLONG  CorrPower;
-
-  Return = FALSE;
-  if (Motor[No].TachoCntUp)
-  { // RampUp enabled
-
-    Motor[No].State = LIMITED_REG_STEPUP;
-
-    if (0 != Motor[No].Speed)
-    {
-      CorrPower = Motor[No].TargetPower - (SLONG)(Motor[No].Speed);
-    }
-    else
-    {
-      CorrPower = Motor[No].TargetPower;
-    }
-
-    // Number of powersteps per tacho count
-    Motor[No].RampUpFactor = ((CorrPower * RAMP_FACTOR) + (Motor[No].TachoCntUp/2))/Motor[No].TachoCntUp;
-
-    if (0 == Motor[No].RampUpFactor)
-    {
-      Motor[No].RampUpFactor = 1;
-    }
-    Motor[No].RampUpOffset = Motor[No].Speed;
-
-    if (0 == Motor[No].Speed)
-    {
-      ClearPIDParameters(No);
-    }
-
-    if((0 == Motor[No].TachoCntConst) && (0 == Motor[No].TachoCntDown) && (1 == Motor[No].TargetBrake))
-    {
-      Motor[No].BrakeAfter = TRUE;
-    }
-    else
-    {
-      Motor[No].BrakeAfter = FALSE;
-    }
-    Motor[No].LockRampDown = FALSE;
-    Return                 = TRUE;
-  }
-  return(Return);
-}
-
-
-/*! \page PwmModule
- *
- *  <hr size="1"/>
- *  <b>     write </b>
- *
- */
-/*! \brief    StepPowerCheckTachoCntConst
- *
- *  Helper function
- *  Checks if step power should have a constant power sequence
- *
- *  Parameters:
- *  No: The motor number
- *  AdjustTachoValue: The value that the tacho should be decremented
- *
- */
-UBYTE   StepSpeedCheckTachoCntConst(UBYTE No, SLONG AdjustTachoValue)
-{
-  UBYTE ReturnState;
-
-  ReturnState = FALSE;
-
-  if (Motor[No].TachoCntConst)
-  {
-    *StepPowerSteps[No]  -= AdjustTachoValue;
-    Motor[No].TargetSpeed = Motor[No].TargetPower; //(Motor[No].TargetPower / SPEED_PWMCNT_REL);
-    Motor[No].State       = LIMITED_REG_STEPCONST;
-    ClearPIDParameters(No);
-
-    if((0 == Motor[No].TachoCntDown) && (1 == Motor[No].TargetBrake))
-    {
-      Motor[No].BrakeAfter = TRUE;
-    }
-    else
-    {
-      Motor[No].BrakeAfter = FALSE;
-    }
-    Motor[No].LockRampDown = FALSE;
-    ReturnState            =  TRUE;
-  }
-  return(ReturnState);
-}
-
-
-/*! \page PwmModule
- *
- *  <hr size="1"/>
- *  <b>     write </b>
- *
- */
-/*! \brief    StepSpeedCheckTachoCntDown
- *
- *  Helper function
- *  Checks if step power should ramp down or stop
- *
- *  Parameters:
- *  No: The motor number
- *  AdjustTachoValue: The value that the tacho should be decremented
- *
- */
-void    StepSpeedCheckTachoCntDown(UBYTE No, SLONG AdjustTachoValue)
-{
-  if (Motor[No].TachoCntDown)
-  {
-    Motor[No].RampDownFactor = ((Motor[No].TargetPower * RAMP_FACTOR) + (Motor[No].TachoCntDown/2))/Motor[No].TachoCntDown;
-
-    *StepPowerSteps[No]     -= AdjustTachoValue;
-    Motor[No].State          = LIMITED_REG_STEPDOWN;
-    MinRegEnabled[No]        = FALSE;
-    ClearPIDParameters(No);
-  }
-  else
-  {
-    StepPowerStopMotor(No, AdjustTachoValue);
-  }
-}
-
-
-/*! \page PwmModule
- *
- *  <hr size="1"/>
- *  <b>     write </b>
- *
- */
-/*! \brief    StepPowerCheckTachoCntUp
- *
- *  Helper function
- *  Checks if step power should have a Count up sequence
- *
- *  Parameters:
- *  No: The motor number
- *
- */
-UBYTE    StepPowerCheckTachoCntUp(UBYTE No)
-{
-  UBYTE Return;
-
-  Return = FALSE;
-
-  if (Motor[No].TachoCntUp)
-  { // RampUp enabled
-
-    Motor[No].State        = LIMITED_UNREG_STEPUP;
-    Motor[No].RampUpFactor = ((Motor[No].TargetPower * RAMP_FACTOR) + (Motor[No].TachoCntUp/2))/Motor[No].TachoCntUp;
-    ClearPIDParameters(No);
-
-    if((0 == Motor[No].TachoCntConst) && (0 == Motor[No].TachoCntDown) && (1 == Motor[No].TargetBrake))
-    {
-      Motor[No].BrakeAfter = TRUE;
-    }
-    else
-    {
-      Motor[No].BrakeAfter = FALSE;
-    }
-    Motor[No].LockRampDown = FALSE;
-    Return                 = TRUE;
-  }
-  return(Return);
-}
-
-
-/*! \page PwmModule
- *
- *  <hr size="1"/>
- *  <b>     write </b>
- *
- */
-/*! \brief    StepPowerCheckTachoCntConst
- *
- *  Helper function
- *  Checks if step power should have a constant power sequense
- *
- *  Parameters:
- *  No: The motor number
- *  AdjustTachoValue: The value that the tacho should be decremented
- *
- */
-UBYTE   StepPowerCheckTachoCntConst(UBYTE No, SLONG AdjustTachoValue)
-{
-  UBYTE ReturnState;
-
-  ReturnState = FALSE;
-
-  if (Motor[No].TachoCntConst)
-  {
-   *StepPowerSteps[No] -= AdjustTachoValue;
-   Motor[No].Power      = Motor[No].TargetPower;
-   Motor[No].State      = LIMITED_UNREG_STEPCONST;
-   SetPower(No,Motor[No].Power);
-   ClearPIDParameters(No);
-
-   if((0 == Motor[No].TachoCntDown) && (1 == Motor[No].TargetBrake))
-   {
-     Motor[No].BrakeAfter = TRUE;
-   }
-   else
-   {
-     Motor[No].BrakeAfter = FALSE;
-   }
-   Motor[No].LockRampDown = FALSE;
-   ReturnState            = TRUE;
-  }
-  return(ReturnState);
-}
-
-
-/*! \page PwmModule
- *
- *  <hr size="1"/>
- *  <b>     write </b>
- *
- */
-/*! \brief    StepPowerCheckTachoCntDown
- *
- *  Helper function
- *  Checks if step power should ramp down or stop
- *
- *  Parameters:
- *  No: The motor number
- *  AdjustTachoValue: The value that the tacho should be decremented
- *
- */
-void    StepPowerCheckTachoCntDown(UBYTE No, SLONG AdjustTachoValue)
-{
-  if (Motor[No].TachoCntDown)
-  {
-
-    Motor[No].RampDownFactor  = ((Motor[No].TargetPower * RAMP_FACTOR) + (Motor[No].TachoCntDown/2))/Motor[No].TachoCntDown;
-    *StepPowerSteps[No]      -= AdjustTachoValue;
-    Motor[No].State           = LIMITED_UNREG_STEPDOWN;
-    MinRegEnabled[No]         = FALSE;
-    ClearPIDParameters(No);
-  }
-  else
-  {
-    StepPowerStopMotor(No, AdjustTachoValue);
-  }
-}
-
-
-/*! \page PwmModule
- *
- *  <hr size="1"/>
- *  <b>     write </b>
- *
- *
- */
-/*! \brief    dRegulateSpeed
- *
- *  - Calculates the new motor power value (duty cycle)
- *
- *  - Regulation method:
- *    To be defined
- *
- *  - Parameters:
- *    - Input:
- *      - No:       Motor output number
- *
- *    -Output:
- *      - None
- */
-void      dRegulateSpeed(UBYTE No)
-{
-
-  SLONG   SpeedErr;
-
-  if (TYPE_MINITACHO == Motor[No].Type)
-  {
-    SpeedErr       = ((SLONG)(Motor[No].TargetSpeed) - (SLONG)(Motor[No].Speed));
-    Motor[No].PVal = SpeedErr * 4; 
-    Motor[No].IVal = ((Motor[No].IVal * 9)/10) + (SpeedErr / 3);
-    Motor[No].DVal = (((SpeedErr - (Motor[No].OldSpeedErr)) * 4)/2) * 40;
-  }
-  else
-  {
-    SpeedErr       = ((SLONG)(Motor[No].TargetSpeed) - (SLONG)(Motor[No].Speed));
-    Motor[No].PVal = SpeedErr * 2;
-    Motor[No].IVal = ((Motor[No].IVal * 9)/10) + (SpeedErr / 4);
-    Motor[No].DVal = (((SpeedErr - (Motor[No].OldSpeedErr)) * 4)/2) * 40;
-  }
-
-  Motor[No].Power = Motor[No].Power + ((Motor[No].PVal + Motor[No].IVal + Motor[No].DVal));
-
-  if(Motor[No].Power > MAX_PWM_CNT)
-  {
-    Motor[No].Power = MAX_PWM_CNT;
-  }
-
-  if(Motor[No].Power < -MAX_PWM_CNT)
-  {
-    Motor[No].Power = -MAX_PWM_CNT;
-  }
-  Motor[No].OldSpeedErr = SpeedErr;
-
-
-  if (((Motor[No].TargetSpeed) > 0) && (Motor[No].Power < 0))
-  {
-    Motor[No].Power = 0;
-  }
-
-  if (((Motor[No].TargetSpeed) < 0) && (Motor[No].Power > 0))
-  {
-    Motor[No].Power = 0;
-  }
-
-  SetRegulationPower(No, Motor[No].Power);
-}
-
-
-void      BrakeMotor(UBYTE No, SLONG TachoCnt)
-{
-  SLONG TmpTacho;
-
-  TmpTacho = TachoCnt * 100;
-
-  TmpTacho <<= 2;
-
-  if (TmpTacho > MAX_PWM_CNT)
-  {
-    TmpTacho = MAX_PWM_CNT;
-  }
-  if (TmpTacho < -MAX_PWM_CNT)
-  {
-    TmpTacho = -MAX_PWM_CNT;
-  }
-
-  Motor[No].Power = 0 - TmpTacho;
-  SetRegulationPower(No,Motor[No].Power);
-}
-
-
-UBYTE      RampDownToBrake(UBYTE No, SLONG CurrentCnt, SLONG TargetCnt, SLONG Dir)
-{
-  UBYTE    Status;
-
-  Status = FALSE;
-
-  if (TRUE == CheckLessThanSpecial(CurrentCnt, TargetCnt, Dir))
-  {
-
-//    Motor[No].TargetSpeed = (SBYTE)((Motor[No].TachoCntConst - CurrentCnt));
-    Motor[No].TargetSpeed = (SBYTE)(TargetCnt - CurrentCnt);
-
-    if ((Motor[No].TargetSpeed > 5) || (Motor[No].TargetSpeed < -5))
-    {
-      if (TRUE == CheckLessThanSpecial(Motor[No].TargetSpeed, Motor[No].Speed, Dir))
-      {
-        Motor[No].TargetSpeed = 1 * Dir;
-      }
-    }
-
-    dRegulateSpeed(No);
-  }
-  else
-  {
-    // Done ramping down to brake
-    Status = TRUE;
-  }
-  return(Status);
-}
-
-
-void      CalcRampDownFactor(UBYTE No, ULONG CurrentPower, ULONG Counts)
-{
-
-  if (Counts != 0)
-  {
-    Motor[No].RampDownFactor = ((CurrentPower * RAMP_FACTOR) + (Counts/2))/Counts;
-  }
-}
-
-
-void      GetCompareCounts(UBYTE No, SLONG *Counts, SLONG *CompareCounts)
-{
-  *Counts = *StepPowerSteps[No];
-
-  if (TRUE == Motor[No].BrakeAfter)
-  {
-    if (StepPowerSteps[No] != &(Motor[No].TachoCnt))
-    {
-      // Run for time
-      *CompareCounts = *Counts + (Motor[No].Speed);
-    }
-    else
-    {
-      // Run for tacho
-      if (TYPE_TACHO == Motor[No].Type)
-      {
-        *CompareCounts = *Counts + ((Motor[No].Speed)/2);
-      }
-      else
-      {
-        *CompareCounts = *Counts + ((Motor[No].Speed/3));
-      }
-    }
-  }
-  else
-  {
-    *CompareCounts = *Counts;
-  }
-}
-
-
 void      StopAndBrakeMotor(UBYTE MotorNo)
 {
   ReadyStatus             &=  ~(0x01 << MotorNo);
   TestStatus              &=  ~(0x01 << MotorNo);
   Motor[MotorNo].Power     =  0;
-  Motor[MotorNo].Speed     =  0;
   Motor[MotorNo].TachoCnt  =  0;
   Motor[MotorNo].State     =  BRAKED;
-  CLEARTachoArray(MotorNo);
+  Motor[MotorNo].moving = FALSE;
   SetPower(MotorNo, Motor[MotorNo].Power);
   SetBrake(MotorNo);
 }
@@ -1428,99 +828,202 @@ void      StopAndFloatMotor(UBYTE MotorNo)
   ReadyStatus             &=  ~(0x01 << MotorNo);
   TestStatus              &=  ~(0x01 << MotorNo);
   Motor[MotorNo].Power     =  0;
-  Motor[MotorNo].Speed     =  0;
   Motor[MotorNo].TachoCnt  =  0;
   Motor[MotorNo].State     =  IDLE;
-  CLEARTachoArray(MotorNo);
+  Motor[MotorNo].moving = FALSE;
   SetPower(MotorNo, Motor[MotorNo].Power);
   SetCoast(MotorNo);
 }
 
-
-void     FloatSyncedMotors(void)
+static void reset(MOTOR *pm)
 {
-  UBYTE   TmpNo0, TmpNo1;
-
-  TmpNo0 = SyncMNos[0];
-  TmpNo1 = SyncMNos[1];
-
-  Motor[TmpNo0].Mutex  =  TRUE;
-  Motor[TmpNo1].Mutex  =  TRUE;
-
-  StopAndFloatMotor(TmpNo0);
-  StopAndFloatMotor(TmpNo1);
-  SyncMNos[0] = UNUSED_SYNC_MOTOR;
-  SyncMNos[1] = UNUSED_SYNC_MOTOR;
-
-  MaxSyncSpeed              = 0;
-  Motor[TmpNo0].TargetSpeed = 0;
-  Motor[TmpNo1].TargetSpeed = 0;
-
-  Motor[TmpNo0].Mutex  =  FALSE;
-  Motor[TmpNo1].Mutex  =  FALSE;
+	pm->tachoCnt = pm->curCnt = intToFix(pm->TachoCnt);
+	pm->baseTime = pm->TimeCnt;
+	pm->moving = FALSE;
 }
 
-
-void      TestAndFloatSyncedMotors(UBYTE MotorBitField, UBYTE SyncCmd)
+static void startSubMove(MOTOR *pm, SLONG speed, SLONG acceleration, SLONG limit, UBYTE hold)
 {
-//  UBYTE   TmpNo0, TmpNo1;
+	int absAcc = FixAbs(acceleration);
+	//printk("start sm %x\n", limit);
+	pm->checkLimit = FixAbs(limit) != NO_LIMIT;
+	limit = intToFix(limit);
+	pm->baseTime = pm->TimeCnt;;
+	if (!pm->moving && FixAbs(limit - pm->curCnt) < STOP_LIMIT)
+		pm->curTargetVelocity = 0;
+	else
+		pm->curTargetVelocity = (limit - pm->curCnt >= 0 ? speed : -speed);
+	if (absAcc == 0 && pm->checkLimit)
+	{
+		pm->accTime = FixRound(FixDiv(2*(limit-pm->curCnt), pm->curVelocity)*1024);
+		absAcc = FixAbs((pm->curVelocity*1024)/pm->accTime);
+		pm->checkLimit = FALSE;
+		pm->curAcc = pm->curTargetVelocity - pm->curVelocity >= 0 ? absAcc : -absAcc;
+	}
+	else
+	{
+		pm->curAcc = pm->curTargetVelocity - pm->curVelocity >= 0 ? absAcc : -absAcc;
+		pm->accTime = FixRound(FixDiv((pm->curTargetVelocity - pm->curVelocity), pm->curAcc) * 1024);
+	}
+	pm->curStopAcc = pm->curTargetVelocity >= 0 ? absAcc : -absAcc;
+	pm->accCnt = (SLONG)((pm->curVelocity + pm->curTargetVelocity)*pm->accTime / (2 * 1024));
+	pm->baseCnt = pm->curCnt;
+	pm->baseVelocity = pm->curVelocity;
+	pm->curHold = hold;
+	pm->curLimit = limit;
+	//limitAngle = curLimit; // limitAngle is in outer. KPT 5/13/2011 06:42
+	pm->moving = (pm->curTargetVelocity != 0) || (pm->baseVelocity != 0);
+	pm->State = UNLIMITED_REG;
+	//printk("acc time %d\n", pm->accTime);
+	//printk("acc cnt %d\n", FixRound(pm->accCnt));
+	//printk("curpos %d\n", FixRound(pm->curCnt));
+}
+/**
+ * The move has completed either by the motor stopping or by it stalling
+ * @param stalled
+ */
+static void endMove(MOTOR *pm, UBYTE stalled)
+{
+	printk("end %d pos %d calc %d actual %d\n", stalled, pm->TachoCnt, FixRound(pm->curCnt), pm->curCnt);
+	pm->moving = FALSE;
+	pm->curCnt = intToFix(FixRound(pm->curCnt));
+	//updateState(0, curHold, stalled);
+	if (stalled)
+	{
+		// stalled try and maintain current position
+		reset(pm);
+		pm->curVelocity = 0;
+		pm->stallCnt = 0;
+		startSubMove(pm, 0, 0, NO_LIMIT, pm->curHold);
+	}
+	//notifyAll();
+}
 
-  // Only if motors are already sync'ed
-  if ((SyncMNos[0] != UNUSED_SYNC_MOTOR) && (SyncMNos[1] != UNUSED_SYNC_MOTOR))
-  {
-    if (TRUE == SyncCmd)
-    {
-      //This is new sync'ed motor command
-      if (((MotorBitField & (0x01 << SyncMNos[0])) && (MotorBitField & (0x01 << SyncMNos[1]))))
-      {
-        // Same motors used -> don't stop motors
-      }
-      else
-      {
-        // Only 2 motors can be sync'ed at a time -> stop sync'ed command
-        FloatSyncedMotors();
-      }
-    }
-    else
-    {
-      if ((MotorBitField & (0x01 << SyncMNos[0])) || (MotorBitField & (0x01 << SyncMNos[1])))
-      {
-        // Same motors used -> stop sync'ed command
-        FloatSyncedMotors();
-      }
-    }
+/**
+ * helper method for velocity regulation.
+ * calculates power from error using double smoothing and PID like
+ * control
+ * @param error
+ */
+static void calcPower(MOTOR *pm, SLONG error, SLONG P, SLONG I, SLONG D)
+{
+	// use smoothing to reduce the noise in frequent tacho count readings
+	// New values
+	pm->err1 = FixMult(pm->err1, F_SMOOTH1) + FixMult(error, F_SMOOTH2);  // fast smoothing
+	pm->err2 = FixMult(pm->err2, S_SMOOTH1) + FixMult(error, S_SMOOTH2); // slow smoothing
+	// Original values
+	//err1 = 0.5f * err1 + 0.5f * error;  // fast smoothing
+	//err2 = 0.8f * err2 + 0.2f * error; // slow smoothing
+	SLONG newPower = pm->basePower + FixMult(P, pm->err1) + FixMult(D, (pm->err1 - pm->err2));
+	pm->basePower = pm->basePower + FixMult(I, (newPower - pm->basePower));
+	if (pm->basePower > MAX_POWER)
+		pm->basePower = MAX_POWER;
+	else if (pm->basePower < -MAX_POWER)
+		pm->basePower = -MAX_POWER;
+	//newPower = (float) (power*0.75 + newPower*0.25);
+	SLONG power = (newPower > MAX_POWER ? MAX_POWER : newPower < -MAX_POWER ? -MAX_POWER : newPower);
+	pm->Power = FixRound(power*(SLONG)SPEED_PWMCNT_REL);
+	//printk("power %d\n", pm->Power);
+	//mode = (power == 0 ? TachoMotorPort.STOP : TachoMotorPort.FORWARD);
+	//mode = TachoMotorPort.FORWARD;
+}
 
-
-
-/*
-
-    // Check if new sync'ed motor command uses same motors as previous sync cmd
-    if ((MotorBitField & (0x01 << SyncMNos[0])) && (MotorBitField & (0x01 << SyncMNos[1])))
-    {
-      // Check if only one of the sync'ed motors are affected by the new motor cmd
-      if (((MotorBitField & (0x01 << SyncMNos[0])) || (MotorBitField & (0x01 << SyncMNos[1]))) || (TRUE == SyncCmd))
-      {
-        // The motor is in sync'ed mode -> float both sync'ed motors
-        TmpNo0 = SyncMNos[0];
-        TmpNo1 = SyncMNos[1];
-
-        Motor[TmpNo0].Mutex  =  TRUE;
-        Motor[TmpNo1].Mutex  =  TRUE;
-
-        StopAndFloatMotor(TmpNo0);
-        StopAndFloatMotor(TmpNo1);
-        SyncMNos[0] = UNUSED_SYNC_MOTOR;
-        SyncMNos[1] = UNUSED_SYNC_MOTOR;
-
-        MaxSyncSpeed              = 0;
-        Motor[TmpNo0].TargetSpeed = 0;
-        Motor[TmpNo1].TargetSpeed = 0;
-
-        Motor[TmpNo0].Mutex  =  FALSE;
-        Motor[TmpNo1].Mutex  =  FALSE;
-      }
-    }*/
-  }
+/**
+ * Monitors time and tachoCount to regulate velocity and stop motor rotation at limit angle
+ */
+void regulateMotor(MOTOR *pm)
+{
+	int error;
+	long long elapsed = pm->TimeCnt - pm->baseTime;
+	//printk("rm 1");
+	pm->tachoCnt = intToFix(pm->TachoCnt);
+	if (pm->moving)
+	{
+		if (elapsed < pm->accTime)
+		{
+			//printk("elap %d acc %d\n", (int) elapsed, pm->accTime);
+			// We are still accelerating, calculate new position
+			pm->curVelocity = (pm->baseVelocity + (SLONG)((long long)pm->curAcc * elapsed / (1024)));
+			pm->curCnt = (pm->baseCnt + (SLONG)((long long)(pm->baseVelocity + pm->curVelocity) * elapsed / (2 * 1024)));
+			error = pm->curCnt - pm->tachoCnt;
+			error = intToFix(FixRound(pm->curCnt) - pm->TachoCnt);
+			//printk("e %d tc %d\n", error, pm->TachoCnt);
+			//printk("rm 2");
+		} else
+		{
+			//pm->State = IDLE;
+			// no longer accelerating, calculate new position
+			pm->curVelocity = pm->curTargetVelocity;
+			pm->curCnt = (pm->baseCnt + pm->accCnt + (SLONG)((long long)pm->curVelocity * (elapsed - (long long)pm->accTime) / 1024));
+			error = pm->curCnt - pm->tachoCnt;
+			error = intToFix(FixRound(pm->curCnt) - pm->TachoCnt);
+			// Check to see if the move is complete
+			//printk("rm 3");
+			if (pm->curTargetVelocity == 0 && ((FixAbs(error) < STOP_LIMIT && elapsed > pm->accTime + 100) || elapsed > pm->accTime + 500))
+			{
+				endMove(pm, FALSE);
+			}
+			//printk("rm 4");
+		}
+		// check for stall
+		if (FixAbs(error) > pm->stallLimit)
+		{
+			//printk("elapsed %d\n", (int)elapsed);
+			pm->baseTime += pm->TimeInc;
+			if (pm->stallCnt++ > pm->stallTime) endMove(pm, TRUE);
+		}
+		else
+		{
+			pm->stallCnt /= 2;
+		}
+		//printk("rm 5");
+		calcPower(pm, error, pm->moveP, pm->moveI, pm->moveD);
+		// If we have a move limit, check for time to start the deceleration stage
+		if (pm->checkLimit)
+		{
+			//int acc = FixDiv(FixMult(curVelocity,curVelocity),(2*(curLimit - curCnt)));
+			//if (acc != 0 && FixDiv(curStopAcc, acc) < intToFix(1))
+			SLONG acc;
+			SLONG intVel = FixRound(pm->curVelocity);
+			SLONG posErr = FixRound(pm->curLimit - pm->curCnt);
+			acc = FixDiv(pm->curVelocity, FixDiv(2*(pm->curLimit - pm->curCnt), pm->curVelocity));
+			/*
+			//printk("cur lim %d cnt %d vel %d\n", intVel, pm->curLimit, pm->curCnt);
+			if (posErr == 0)
+				acc = pm->curStopAcc + 1;
+			else
+			    acc = intToFix(intVel*intVel)/(2*posErr);*/
+			//printk("rm 6");
+			//if (acc != 0 && FixRound(pm->curStopAcc)/acc <= 1)
+			if (acc != 0 && FixDiv(pm->curStopAcc, acc) <= intToFix(1))
+			{
+				//System.out.println("stop acc " + FixRound(curStopAcc) + " acc " + FixRound(acc));
+				//System.out.println("stop acc " + FixRound(curStopAcc) + " acc " + acc);
+				//System.out.println("vel " + FixRound(curVelocity) + " limit " + FixRound(curLimit) + " cnt " + FixRound(curCnt));
+				//printk("rm 7");
+				//startSubMove(pm, 0, intToFix(acc), NO_LIMIT, pm->curHold);
+				startSubMove(pm, 0, acc, NO_LIMIT, pm->curHold);
+				//startSubMove(pm, 0, 0, FixRound(pm->curLimit), pm->curHold);
+			}
+			//printk("rm 8");
+		}
+	} else if (pm->curHold)
+	{
+		// not moving, hold position
+		error = pm->curCnt - pm->tachoCnt;
+		//printk("rm 9");
+		calcPower(pm, error, pm->holdP, pm->holdI, pm->holdD);
+		//printk("rm 10");
+	}
+	else
+	{
+		// Allow the motor to move freely
+		pm->curCnt = pm->tachoCnt;
+		pm->Power = 0;
+		//mode = TachoMotorPort.FLOAT;
+		//active = false;
+		//cont.removeMotor(this);
+	}
 }
 
 
@@ -1540,7 +1043,6 @@ void      TestAndFloatSyncedMotors(UBYTE MotorBitField, UBYTE SyncCmd)
 static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
 {
   UBYTE No;
-  UBYTE Test;
 
   static SLONG volatile TmpTacho;
   static SLONG volatile Tmp;
@@ -1557,7 +1059,7 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
 
     /* Update shared memory */
     pMotor[No].TachoCounts   =  Motor[No].TachoCnt;
-    pMotor[No].Speed         =  Motor[No].Speed;
+    pMotor[No].Speed         =  Motor[No].moving;
     pMotor[No].TachoSensor   =  Motor[No].TachoSensor;
 
     Motor[No].TimeCnt       +=  Motor[No].TimeInc;  // Add or sub so that TimerCnt is 1 mS resolution
@@ -1565,568 +1067,30 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
     if (FALSE == Motor[No].Mutex)
     {
 
-      Test = dCalculateSpeed(No, &(Motor[No].Speed));
+      //Test = dCalculateSpeed(No, &(Motor[No].Speed));
       switch(Motor[No].State)
       {
         case UNLIMITED_UNREG:
-        {
-          if (Motor[No].TargetPower != Motor[No].Power)
-          {
-            Motor[No].Power  = Motor[No].TargetPower;
-            SetPower(No,Motor[No].Power);
-          }
-          Motor[No].TachoCnt  =  0;
-          Motor[No].TimeCnt   =  0;
-
-        }
         break;
 
         case UNLIMITED_REG:
-        {
-          dRegulateSpeed(No);
-          Motor[No].TachoCnt  =  0;
-          Motor[No].TimeCnt   =  0;
-        }
-        break;
-
-        case LIMITED_REG_STEPUP:
-        {
-          UBYTE  Status;
-          SLONG  StepCnt;
-          SLONG  StepCntTst;
-
-          // Status used to check if ramp up has completed
-          Status  = FALSE;
-
-          if (StepPowerSteps[No] != &(Motor[No].TachoCnt))
-          {
-            Motor[No].TachoCnt =  0;
-          }
-          else
-          {
-            Motor[No].TimeCnt  =  0;
-          }
-
-          GetCompareCounts(No, &StepCnt, &StepCntTst);
-
-          if ((TRUE == CheckLessThanSpecial(StepCntTst, Motor[No].TachoCntUp, Motor[No].Dir)) && (FALSE == Motor[No].LockRampDown))
-          {
-            Motor[No].TargetSpeed = ((StepCnt * (Motor[No].RampUpFactor))/ RAMP_FACTOR) + Motor[No].RampUpOffset;
-            if (TRUE == CheckLessThanSpecial((SLONG)Motor[No].TargetSpeed,((SLONG)6 * Motor[No].Dir), Motor[No].Dir))
-            {
-              //Ensure minimum speed
-              Motor[No].TargetSpeed = 6 * Motor[No].Dir;
-            }
-            dRegulateSpeed(No);
-          }
-          else
-          {
-            if (TRUE == Motor[No].BrakeAfter)
-            {
-
-              Motor[No].LockRampDown = TRUE;
-              Status = RampDownToBrake(No, StepCnt, Motor[No].TachoCntUp, Motor[No].Dir);
-            }
-            else
-            {
-              Status = TRUE;
-            }
-          }
-
-          if (TRUE == Status)
-          {
-            // Ramp up completed check for next step
-            if (FALSE == StepSpeedCheckTachoCntConst(No, Motor[No].TachoCntUp))
-            {
-              StepSpeedCheckTachoCntDown(No, Motor[No].TachoCntUp);
-            }
-          }
-        }
-        break;
-
-        case LIMITED_REG_STEPCONST:
-        {
-          SLONG   StepCnt, StepCntTst;
-
-          if (StepPowerSteps[No] != &(Motor[No].TachoCnt))
-          {
-            Motor[No].TachoCnt = 0;
-          }
-          else
-          {
-            Motor[No].TimeCnt  = 0;
-          }
-
-          GetCompareCounts(No, &StepCnt, &StepCntTst);
-
-          if ((TRUE == CheckLessThanSpecial(StepCntTst, Motor[No].TachoCntConst, Motor[No].Dir)) && (FALSE == Motor[No].LockRampDown))
-          {
-            dRegulateSpeed(No);
-          }
-          else
-          {
-            if (TRUE == Motor[No].BrakeAfter)
-            {
-              Motor[No].LockRampDown = TRUE;
-              if (TRUE == RampDownToBrake(No, StepCnt, Motor[No].TachoCntConst, Motor[No].Dir))
-              {
-                StepSpeedCheckTachoCntDown(No, Motor[No].TachoCntConst);
-              }
-            }
-            else
-            {
-              StepSpeedCheckTachoCntDown(No, Motor[No].TachoCntConst);
-            }
-          }
-        }
-        break;
-
-        case LIMITED_REG_STEPDOWN:
-        {
-          SLONG   StepCnt;
-          SBYTE   NewSpeed;
-
-          StepCnt = *StepPowerSteps[No];
-
-          if (StepPowerSteps[No] != &(Motor[No].TachoCnt))
-          {
-            Motor[No].TachoCnt  =  0;
-          }
-          else
-          {
-            Motor[No].TimeCnt =  0;
-          }
-
-          if (TRUE == CheckLessThanSpecial(StepCnt, Motor[No].TachoCntDown, Motor[No].Dir))
-          {
-            NewSpeed = Motor[No].TargetPower - ((StepCnt * (Motor[No].RampDownFactor))/ RAMP_FACTOR);
-            if (TRUE == CheckLessThanSpecial((4 * Motor[No].Dir), NewSpeed, Motor[No].Dir))
-            {
-              Motor[No].TargetSpeed = NewSpeed;
-            }
-            dRegulateSpeed(No);
-          }
-          else
-          {
-            StepPowerStopMotor(No, Motor[No].TachoCntDown);
-          }
-        }
-        break;
-
-        case LIMITED_UNREG_STEPUP:
-        {
-
-          UBYTE  Status;
-          SLONG  StepCnt;
-          SLONG  StepCntTst;
-
-          // Status used to check if ramp up has completed
-          Status  = FALSE;
-
-          if (StepPowerSteps[No] != &(Motor[No].TachoCnt))
-          {
-            Motor[No].TachoCnt  =  0;
-          }
-          else
-          {
-            Motor[No].TimeCnt =  0;
-          }
-
-          GetCompareCounts(No, &StepCnt, &StepCntTst);
-
-          if ((TRUE == CheckLessThanSpecial(StepCntTst, Motor[No].TachoCntUp, Motor[No].Dir)) && (FALSE == Motor[No].LockRampDown))
-          {
-            if (0 != Motor[No].Speed)
-            {
-              if (TRUE == CheckLessThanSpecial(Motor[No].Power, (StepCnt * (Motor[No].RampUpFactor))/*/RAMP_FACTOR*/, Motor[No].Dir))
-              {
-                // if very slow ramp up then power could be calculated as 0 for a while
-                // avoid starting and stopping
-                Motor[No].Power = (StepCnt * (Motor[No].RampUpFactor))/RAMP_FACTOR;
-
-              }
-
-              if (TRUE == CheckLessThanSpecial(Motor[No].Power, 0, Motor[No].Dir))
-              {
-                // Avoid motor turning the wrong way
-                Motor[No].Power = Motor[No].Power * -1;
-              }
-            }
-            else
-            {
-              Motor[No].Power += (20 * Motor[No].Dir);
-            }
+        	regulateMotor(&Motor[No]);
             SetPower(No,Motor[No].Power);
-          }
-          else
-          {
-            // Done Stepping up
-            Motor[No].LockRampDown = TRUE;
-            if (TRUE == Motor[No].BrakeAfter)
-            {
-              Status = RampDownToBrake(No, StepCnt, Motor[No].TachoCntUp, Motor[No].Dir);
-            }
-            else
-            {
-              Status = TRUE;
-            }
-          }
-
-          if (TRUE == Status)
-          {
-            // Ramp up completed check for next step
-            if (FALSE == StepPowerCheckTachoCntConst(No, Motor[No].TachoCntUp))
-            {
-              StepPowerCheckTachoCntDown(No, Motor[No].TachoCntUp);
-            }
-          }
-        }
-        break;
-
-        case LIMITED_UNREG_STEPCONST:
-        {
-          SLONG   StepCnt, StepCntTst;
-
-          if (StepPowerSteps[No] != &(Motor[No].TachoCnt))
-          {
-            Motor[No].TachoCnt =  0;
-          }
-          else
-          {
-            Motor[No].TimeCnt  =  0;
-          }
-
-          GetCompareCounts(No, &StepCnt, &StepCntTst);
-
-          if ((TRUE == CheckLessThanSpecial(StepCntTst, Motor[No].TachoCntConst, Motor[No].Dir)) && (FALSE == Motor[No].LockRampDown))
-          {
-          }
-          else
-          {
-            if (TRUE == Motor[No].BrakeAfter)
-            {
-
-              Motor[No].LockRampDown = TRUE;
-              if (TRUE == RampDownToBrake(No, StepCnt, Motor[No].TachoCntConst, Motor[No].Dir))
-              {
-                StepPowerCheckTachoCntDown(No, Motor[No].TachoCntConst);
-              }
-            }
-            else
-            {
-              StepPowerCheckTachoCntDown(No, Motor[No].TachoCntConst);
-            }
-          }
-        }
-        break;
-
+        	break;
+        case LIMITED_REG_STEPUP:
+        case LIMITED_REG_STEPCONST:
+        case LIMITED_REG_STEPDOWN:
+        case LIMITED_UNREG_STEPUP:
         case LIMITED_UNREG_STEPDOWN:
-        {
-          SLONG   StepCnt;
-
-          StepCnt = *StepPowerSteps[No];
-
-          if (StepPowerSteps[No] != &(Motor[No].TachoCnt))
-          {
-            Motor[No].TachoCnt  =  0;
-          }
-          else
-          {
-            Motor[No].TimeCnt =  0;
-          }
-
-          if (TRUE == CheckLessThanSpecial(StepCnt, Motor[No].TachoCntDown, Motor[No].Dir))
-          {
-            if ((TRUE == CheckLessThanSpecial((2 * Motor[No].Dir), Motor[No].Speed, Motor[No].Dir)) && (FALSE == MinRegEnabled[No]))
-            {
-              if (TRUE == CheckLessThanSpecial((4 * Motor[No].Dir), (Motor[No].TargetPower - ((StepCnt * (Motor[No].RampDownFactor))/ RAMP_FACTOR)), Motor[No].Dir))
-              {
-                Motor[No].Power = Motor[No].TargetPower - ((StepCnt * (Motor[No].RampDownFactor))/ RAMP_FACTOR);
-              }
-              SetPower(No,Motor[No].Power);
-            }
-            else
-            {
-
-              MinRegEnabled[No]     = TRUE;
-              Motor[No].TargetSpeed = (2 * Motor[No].Dir);
-              dRegulateSpeed(No);
-            }
-          }
-          else
-          {
-            StepPowerStopMotor(No, Motor[No].TachoCntDown);
-          }
-        }
-        break;
-
         case LIMITED_STEP_SYNC:
-        {
-          // Here motor are syncronized and supposed to drive straight
-
-          UBYTE   Cnt;
-          UBYTE   Status;
-          SLONG   StepCnt;
-
-          StepCnt = *StepPowerSteps[No];
-
-          if (StepPowerSteps[No] != &(Motor[No].TachoCnt))
-          {
-            Motor[No].TachoCnt  =  0;
-          }
-          else
-          {
-            Motor[No].TimeCnt =  0;
-          }
-
-          Status  = FALSE;
-
-          if ((Motor[SyncMNos[0]].Power > (MAX_PWM_CNT - 100)) || (Motor[SyncMNos[0]].Power < (-MAX_PWM_CNT + 100)))
-          {
-            // Regulation is stretched to the limit....... Checked in both directions
-            Status = TRUE;
-            if (TRUE == CheckLessThanSpecial((SLONG)(Motor[SyncMNos[0]].Speed), (SLONG)(Motor[SyncMNos[0]].TargetSpeed), Motor[SyncMNos[0]].Dir))
-            {
-              if (TRUE == CheckLessThanSpecial((SLONG)(Motor[SyncMNos[0]].Speed), (SLONG)(MaxSyncSpeed), Motor[SyncMNos[0]].Dir))
-              {
-                // Check for running the same direction as target speed
-                if (((Motor[SyncMNos[0]].Speed <= 0) && (Motor[SyncMNos[0]].TargetSpeed <= 0)) ||
-                    ((Motor[SyncMNos[0]].Speed >= 0) && (Motor[SyncMNos[0]].TargetSpeed >= 0)))
-                {
-                  MaxSyncSpeed = Motor[SyncMNos[0]].Speed;
-                }
-              }
-            }
-          }
-          if ((Motor[SyncMNos[1]].Power > (MAX_PWM_CNT - 100)) || (Motor[SyncMNos[1]].Power < (-MAX_PWM_CNT + 100)))
-          {
-            // Regulation is stretched to the limit....... Checked in both directions
-            Status = TRUE;
-            if (TRUE == CheckLessThanSpecial((SLONG)(Motor[SyncMNos[1]].Speed), (SLONG)(Motor[SyncMNos[1]].TargetSpeed), (Motor[SyncMNos[0]].Dir * Motor[SyncMNos[1]].Dir)))
-            {
-              if (TRUE == CheckLessThanSpecial((SLONG)(Motor[SyncMNos[1]].Speed), (SLONG)(MaxSyncSpeed), (Motor[SyncMNos[0]].Dir * Motor[SyncMNos[1]].Dir)))
-              {
-                // Check for running the same direction as target speed
-                if (((Motor[SyncMNos[1]].Speed <= 0) && (Motor[SyncMNos[1]].TargetSpeed <= 0)) ||
-                    ((Motor[SyncMNos[1]].Speed >= 0) && (Motor[SyncMNos[1]].TargetSpeed >= 0)))
-                {
-                  MaxSyncSpeed = Motor[SyncMNos[1]].Speed;
-                }
-              }
-            }
-          }
-
-          if (FALSE == Status)
-          {
-            if (TRUE == CheckLessThanSpecial((SLONG)(MaxSyncSpeed), Motor[SyncMNos[0]].TargetPower, Motor[SyncMNos[0]].Dir))
-            {
-              // TargetSpeed has been reduced but now there is room to increase
-              IncSpeed(Motor[SyncMNos[0]].Dir, &MaxSyncSpeed);
-            }
-          }
-
-          for (Cnt = 0; Cnt < MAX_SYNC_MOTORS; Cnt++)
-          {
-            //Update all motors to the max sync speed
-            Motor[SyncMNos[Cnt]].TargetSpeed = MaxSyncSpeed;
-          }
-
-          if (TRUE == CheckLessThanSpecial(Motor[SyncMNos[1]].TachoCnt, Motor[SyncMNos[0]].TachoCnt, Motor[SyncMNos[0]].Dir))
-          {
-            DecSpeed(Motor[SyncMNos[0]].Dir, &(Motor[SyncMNos[0]].TargetSpeed));
-          }
-
-          if (TRUE == CheckLessThanSpecial(Motor[SyncMNos[0]].TachoCnt, Motor[SyncMNos[1]].TachoCnt, Motor[SyncMNos[0]].Dir))
-          {
-            DecSpeed(Motor[SyncMNos[0]].Dir, &(Motor[SyncMNos[1]].TargetSpeed));
-          }
-
-          dRegulateSpeed(SyncMNos[0]);
-          dRegulateSpeed(SyncMNos[1]);
-
-          CheckforEndOfSync();
-
-        }
-        break;
         case SYNCED_SLAVE:
-        {
-          if (StepPowerSteps[No] != &(Motor[No].TachoCnt))
-          {
-            Motor[No].TachoCnt  =  0;
-          }
-          else
-          {
-            Motor[No].TimeCnt =  0;
-          }
-        }
-        break;
         case LIMITED_DIFF_TURN_SYNC:
-        {
-          UBYTE   Status;
-          SLONG   StepCnt;
-
-          StepCnt = *StepPowerSteps[No];
-
-          if (StepPowerSteps[No] != &(Motor[No].TachoCnt))
-          {
-            Motor[No].TachoCnt  =  0;
-          }
-          else
-          {
-            Motor[No].TimeCnt =  0;
-          }
-
-          Status  = FALSE;
-
-          if ((Motor[SyncMNos[0]].Power > (MAX_PWM_CNT - 100)) || (Motor[SyncMNos[0]].Power < (-MAX_PWM_CNT + 100)))
-          {
-            // Regulation is stretched to the limit....... in both directions
-            Status = TRUE;
-            if (TRUE == CheckLessThanSpecial((SLONG)(Motor[SyncMNos[0]].Speed), (SLONG)(Motor[SyncMNos[0]].TargetSpeed), Motor[SyncMNos[0]].Dir))
-            {
-              if (TRUE == CheckLessThanSpecial((SLONG)(Motor[SyncMNos[0]].Speed), (SLONG)(MaxSyncSpeed), Motor[SyncMNos[0]].Dir))
-              {
-                // Check for running the same direction as target speed
-                if (((Motor[SyncMNos[0]].Speed <= 0) && (Motor[SyncMNos[0]].TargetSpeed <= 0)) ||
-                    ((Motor[SyncMNos[0]].Speed >= 0) && (Motor[SyncMNos[0]].TargetSpeed >= 0)))
-                {
-                  MaxSyncSpeed = Motor[SyncMNos[0]].Speed;
-                }
-              }
-            }
-          }
-
-          if ((Motor[SyncMNos[1]].Power > (MAX_PWM_CNT - 100)) || (Motor[SyncMNos[1]].Power < (-MAX_PWM_CNT + 100)))
-          {
-            // Regulation is stretched to the limit....... in both directions
-            Status = TRUE;
-            if (TRUE == CheckLessThanSpecial((SLONG)(Motor[SyncMNos[1]].Speed), (SLONG)(Motor[SyncMNos[1]].TargetSpeed), (Motor[SyncMNos[1]].Dir * Motor[SyncMNos[0]].Dir)))
-            {
-              if (TRUE == CheckLessThanSpecial((SLONG)((Motor[SyncMNos[1]].Speed * 100)/(Motor[SyncMNos[1]].TurnRatio * Motor[SyncMNos[1]].Dir)), (SLONG)(MaxSyncSpeed), Motor[SyncMNos[0]].Dir))
-              {
-                if ((0 == Motor[SyncMNos[1]].TurnRatio) || (0 == Motor[SyncMNos[1]].Speed))
-                {
-                  MaxSyncSpeed = 0;
-                }
-                else
-                {
-                  // Check for running the same direction as target speed
-                  if (((Motor[SyncMNos[1]].Speed <= 0) && (Motor[SyncMNos[1]].TargetSpeed <= 0)) ||
-                      ((Motor[SyncMNos[1]].Speed >= 0) && (Motor[SyncMNos[1]].TargetSpeed >= 0)))
-                  {
-                    MaxSyncSpeed = ((Motor[SyncMNos[1]].Speed * 100)/Motor[SyncMNos[1]].TurnRatio) * Motor[SyncMNos[1]].Dir;
-                  }
-                }
-              }
-            }
-          }
-
-          if (FALSE == Status)
-          {
-            if (TRUE == CheckLessThanSpecial((SLONG)(MaxSyncSpeed), Motor[SyncMNos[0]].TargetPower, Motor[SyncMNos[0]].Dir))
-            {
-              // TargetSpeed has been reduced but now there is room to increase
-              IncSpeed(Motor[SyncMNos[0]].Dir, &MaxSyncSpeed);
-            }
-          }
-
-          // Set the new
-          Motor[SyncMNos[0]].TargetSpeed = MaxSyncSpeed;
-          if ((0 == Motor[SyncMNos[1]].TurnRatio) || (0 == MaxSyncSpeed))
-          {
-            Motor[SyncMNos[1]].TargetSpeed = 0;
-          }
-          else
-          {
-            Motor[SyncMNos[1]].TargetSpeed = ((MaxSyncSpeed * Motor[SyncMNos[1]].TurnRatio)/100) * Motor[SyncMNos[1]].Dir;
-          }
-
-          if(0 != Motor[SyncMNos[1]].TurnRatio)
-          {
-            if (TRUE == CheckLessThanSpecial((((Motor[SyncMNos[1]].TachoCnt * 100)/Motor[SyncMNos[1]].TurnRatio) * Motor[SyncMNos[1]].Dir), Motor[SyncMNos[0]].TachoCnt, Motor[SyncMNos[0]].Dir))
-            {
-              DecSpeed(Motor[SyncMNos[0]].Dir, &(Motor[SyncMNos[0]].TargetSpeed));
-            }
-          }
-
-          if(0 != Motor[SyncMNos[1]].TurnRatio)
-          {
-            if (TRUE == CheckLessThanSpecial(Motor[SyncMNos[0]].TachoCnt, ((Motor[SyncMNos[1]].TachoCnt * 100)/(Motor[SyncMNos[1]].TurnRatio) * Motor[SyncMNos[1]].Dir), Motor[SyncMNos[0]].Dir))
-            {
-              DecSpeed(Motor[SyncMNos[1]].Dir * Motor[SyncMNos[0]].Dir, &(Motor[SyncMNos[1]].TargetSpeed));
-            }
-          }
-
-          dRegulateSpeed(SyncMNos[0]);
-          dRegulateSpeed(SyncMNos[1]);
-
-          CheckforEndOfSync();
-
-        }
-        break;
-
         case RAMP_DOWN_SYNC:
-        {
-
-          SLONG   Count0, Count1;
-
-          if (StepPowerSteps[No] != &(Motor[No].TachoCnt))
-          {
-            Motor[No].TachoCnt = 0;
-          }
-          else
-          {
-            Motor[No].TimeCnt  = 0;
-          }
-
-          // Duration is either dependent on timer ticks or tacho counts
-          GetSyncDurationCnt(&Count0, &Count1);
-
-          if (TRUE == CheckLessThanSpecial(Count0, Motor[SyncMNos[0]].TachoCntConst, Motor[SyncMNos[0]].Dir))
-          {
-
-            RampDownToBrake(SyncMNos[0], Count0, Motor[SyncMNos[0]].TachoCntConst, Motor[SyncMNos[0]].Dir);
-
-            if (StepPowerSteps[SyncMNos[0]] == TimerSteps[SyncMNos[0]])
-            {
-              // Needs to adjust second synchronised in time mode - both motor needs to run for the same
-              // amount of time but not at the same speed
-              RampDownToBrake(SyncMNos[1], ((Count1 * Motor[SyncMNos[1]].TurnRatio)/100),(( Motor[SyncMNos[1]].TachoCntConst * Motor[SyncMNos[1]].TurnRatio)/100), (Motor[SyncMNos[0]].Dir * Motor[SyncMNos[1]].Dir));
-            }
-            else
-            {
-              RampDownToBrake(SyncMNos[1], Count1, Motor[SyncMNos[1]].TachoCntConst, (Motor[SyncMNos[0]].Dir * Motor[SyncMNos[1]].Dir));
-            }
-          }
-          else
-          {
-            MaxSyncSpeed                    = 0;
-            Motor[SyncMNos[0]].TargetSpeed  = 0;
-            Motor[SyncMNos[1]].TargetSpeed  = 0;
-            StepPowerStopMotor(SyncMNos[0], Motor[SyncMNos[0]].TachoCntConst);
-            StepPowerStopMotor(SyncMNos[1], Motor[SyncMNos[1]].TachoCntConst);
-          }
-        }
-        break;
-
         case STOP_MOTOR:
-        {
-          if (PrgStopTimer[No])
-          {
-            PrgStopTimer[No]--;
-          }
-          else
-          {
-            Motor[No].State        = IDLE;
-            Motor[No].TargetState  = UNLIMITED_UNREG;
-            SetCoast(No);
-          }
-        }
-        break;
-
+        	break;
         case BRAKED:
         {
-          BrakeMotor(No, Motor[No].TachoCnt);
+          //BrakeMotor(No, Motor[No].TachoCnt);
         }
         break;
 
@@ -2145,48 +1109,13 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
 }
 
 
-void      GetSyncDurationCnt(SLONG *pCount0, SLONG *pCount1)
+static SLONG getVal(SBYTE *buf, SLONG offset)
 {
-  if (StepPowerSteps[SyncMNos[0]] == TimerSteps[SyncMNos[0]])
-  {
-    *pCount0 = *TimerSteps[SyncMNos[0]];
-    *pCount1 = *TimerSteps[SyncMNos[1]];
-  }
-  else
-  {
-    *pCount0 = *TachoSteps[SyncMNos[0]];
-    *pCount1 = *TachoSteps[SyncMNos[1]];
-  }
+	return (SLONG) ((SLONG)(buf[offset]) & 0xff) +
+			(((SLONG)(buf[offset+1]) & 0xff) << 8) +
+			(((SLONG)(buf[offset+2]) & 0xff) << 16) +
+			(((SLONG)(buf[offset+3]) & 0xff) << 24);
 }
-
-
-void      CheckforEndOfSync(void)
-{
-  SLONG   Count0, Count1;
-  SBYTE   Speed;
-
-  // Duration is either dependent on timer ticks or tacho counts
-  GetSyncDurationCnt(&Count0, &Count1);
-
-  if (StepPowerSteps[SyncMNos[0]] == TimerSteps[SyncMNos[0]])
-  {
-    Speed = (Motor[SyncMNos[0]].Speed);
-  }
-  else
-  {
-    Speed = (Motor[SyncMNos[0]].Speed/2);
-  }
-
-  if ((TRUE == CheckLessThanSpecial(Count0 + (SLONG)(Speed), Motor[SyncMNos[0]].TachoCntConst,Motor[SyncMNos[0]].Dir)) ||
-      (0 == Motor[SyncMNos[0]].TachoCntConst))
-  {
-  }
-  else
-  {
-    Motor[SyncMNos[0]].State  =  RAMP_DOWN_SYNC;
-  }
-}
-
 
 /*! \page PWMModule
  *
@@ -2226,7 +1155,7 @@ void      CheckforEndOfSync(void)
 static ssize_t Device1Write(struct file *File,const char *Buffer,size_t Count,loff_t *Data)
 {
 
-  SBYTE   Buf[20];
+  SBYTE   Buf[32];
   int     Lng = 0;
 
   copy_from_user(Buf,Buffer,Count);
@@ -2246,55 +1175,30 @@ static ssize_t Device1Write(struct file *File,const char *Buffer,size_t Count,lo
         TestStatus        &=  ~(0x01 << Tmp);   // Clear Test flag
 
         Motor[Tmp].Power       = 0;
-        Motor[Tmp].Speed       = 0;
-        MaxSyncSpeed           = 0;
-        Motor[Tmp].TargetSpeed = 0;
 
-        if (((IDLE == Motor[Tmp].State) && ((OutputRead(Tmp,DIR0)) && (OutputRead(Tmp,DIR1)))) || (BRAKED == Motor[Tmp].State))
-        {
-          PrgStopTimer[Tmp]       = 100/SOFT_TIMER_MS;
-          Motor[Tmp].State        = STOP_MOTOR;
-          Motor[Tmp].TargetState  = UNLIMITED_UNREG;
-          SetBrake(Tmp);
-        }
-        else
-        {
           Motor[Tmp].State        = IDLE;
           Motor[Tmp].TargetState  = UNLIMITED_UNREG;
+          Motor[Tmp].moving = FALSE;
           SetCoast(Tmp);
-        }
+
         Motor[Tmp].Mutex = FALSE;
       }
     }
+    break;
 
     case opPROGRAM_START:
-    {
-      UBYTE Tmp;
-
-      for (Tmp = 0; Tmp < OUTPUTS; Tmp++)
-      {
-        Motor[Tmp].Pol = 1;
-      }
-      SyncMNos[0] = UNUSED_SYNC_MOTOR;
-      SyncMNos[1] = UNUSED_SYNC_MOTOR;
-    }
     break;
 
     case opOUTPUT_SET_TYPE:
     {
-      UBYTE Tmp;
-
-      for (Tmp = 0; Tmp < OUTPUTS; Tmp++)
-      {
-        if (Buf[Tmp + 1] != Motor[Tmp].Type)
+      UBYTE Tmp = Buf[1];
+        if (Buf[2] != Motor[Tmp].Type)
         {
           Motor[Tmp].Mutex  =  TRUE;
-          if ((TYPE_TACHO == Buf[Tmp + 1]) || (TYPE_MINITACHO == Buf[Tmp + 1]))
+          if ((TYPE_TACHO == Buf[2]) || (TYPE_MINITACHO == Buf[2]))
           {
             // There is a motor attached the port
-            CLEARTachoArray(Tmp);
-            SETMotorType(Tmp, Buf[Tmp + 1]);             //  Motor types can be: TYPE_TACHO, TYPE_NONE, TYPE_MINITACHO
-            SETAvgTachoCount(Tmp, 0);                    //  Switching motor => speed = 0
+            SETMotorType(Tmp, Buf[2]);             //  Motor types can be: TYPE_TACHO, TYPE_NONE, TYPE_MINITACHO
           }
           else
           {
@@ -2302,7 +1206,7 @@ static ssize_t Device1Write(struct file *File,const char *Buffer,size_t Count,lo
             Motor[Tmp].State  =  IDLE;
             SetCoast(Tmp);
           }
-          Motor[Tmp].Type          =  Buf[Tmp + 1];
+          Motor[Tmp].Type          =  Buf[2];
 
           // All counts are reset when motor type changes
           Motor[Tmp].TachoCnt      =  0;
@@ -2310,58 +1214,51 @@ static ssize_t Device1Write(struct file *File,const char *Buffer,size_t Count,lo
           Motor[Tmp].TimeCnt       =  0;
           pMotor[Tmp].TachoSensor  =  0;
           Motor[Tmp].TachoSensor   =  0;
+          Motor[Tmp].moveP = getVal(Buf, 3);
+          Motor[Tmp].moveI = getVal(Buf, 7);
+          Motor[Tmp].moveD = getVal(Buf, 11);
+          Motor[Tmp].holdP = getVal(Buf, 15);
+          Motor[Tmp].holdI = getVal(Buf, 19);
+          Motor[Tmp].holdD = getVal(Buf, 23);
+          Motor[Tmp].stallCnt = 0;
+          Motor[Tmp].stallLimit = intToFix(50);
+          Motor[Tmp].stallTime = 1000;
+          Motor[Tmp].TimeInc = SOFT_TIMER_MS;
+printk("holdD %d moveD %d", FixRound(Motor[Tmp].holdD), FixRound(Motor[Tmp].moveD));
+          reset(&Motor[Tmp]);
           Motor[Tmp].Mutex         =  FALSE;
         }
-      }
     }
     break;
 
     case opOUTPUT_RESET:
     {
-      UBYTE Tmp;
+      UBYTE Tmp = Buf[1];
 
-      TestAndFloatSyncedMotors(Buf[1], FALSE);
 
-      for (Tmp = 0;Tmp < OUTPUTS;Tmp++)
-      {
-        if (Buf[1] & (1 << Tmp))
-        {
           Motor[Tmp].Mutex         =  TRUE;
           Motor[Tmp].TachoCnt      =  0;
           pMotor[Tmp].TachoCounts  =  0;
           Motor[Tmp].TimeCnt       =  0;
           Motor[Tmp].Mutex         =  FALSE;
-        }
-      }
+
     }
     break;
 
     case opOUTPUT_CLR_COUNT:
     {
-      UBYTE Tmp;
-      for (Tmp = 0;Tmp < OUTPUTS;Tmp++)
-      {
-        if (Buf[1] & (1 << Tmp))
-        {
+      UBYTE Tmp = Buf[1];
           Motor[Tmp].Mutex         =  TRUE;
           pMotor[Tmp].TachoSensor  =  0;
           Motor[Tmp].TachoSensor   =  0;
           Motor[Tmp].Mutex         =  FALSE;
-        }
-      }
     }
     break;
 
     case opOUTPUT_STOP:
     {
-      UBYTE Tmp;
+      UBYTE Tmp = Buf[1];
 
-      TestAndFloatSyncedMotors(Buf[1], FALSE);
-
-      for (Tmp = 0;Tmp < OUTPUTS;Tmp++)
-      {
-        if (Buf[1] & (1 << Tmp))
-        {
           Motor[Tmp].Mutex     = TRUE;
 
           if (Buf[2])
@@ -2374,119 +1271,49 @@ static ssize_t Device1Write(struct file *File,const char *Buffer,size_t Count,lo
           }
 
           Motor[Tmp].Mutex = FALSE;
-        }
-      }
     }
     break;
 
     case opOUTPUT_POWER:
     {
-      UBYTE Tmp;
+      UBYTE Tmp = Buf[1];
 
-      TestAndFloatSyncedMotors(Buf[1], FALSE);
 
       CheckSpeedPowerLimits(&(Buf[2]));
 
-      for (Tmp = 0;Tmp < OUTPUTS;Tmp++)
-      {
-        if (Buf[1] & (1 << Tmp))
-        {
           Motor[Tmp].Mutex       = TRUE;
-          Motor[Tmp].TargetPower = (SLONG)(Buf[2]) * (SLONG)(Motor[Tmp].Pol) * (SLONG)SPEED_PWMCNT_REL;
+          Motor[Tmp].TargetPower = (SLONG)(Buf[2]) * (SLONG)SPEED_PWMCNT_REL;
 
-          if ((IDLE == Motor[Tmp].State) || (BRAKED == Motor[Tmp].State))
+          Motor[Tmp].TargetState = UNLIMITED_UNREG;
+
+          if (Motor[Tmp].TargetPower != Motor[Tmp].Power)
           {
-            Motor[Tmp].TargetState = UNLIMITED_UNREG;
+            Motor[Tmp].Power  = Motor[Tmp].TargetPower;
+            SetPower(Tmp,Motor[Tmp].Power);
           }
+          Motor[Tmp].TachoCnt  =  0;
+          Motor[Tmp].TimeCnt   =  0;
           Motor[Tmp].Mutex = FALSE;
-        }
-      }
     }
     break;
 
     case opOUTPUT_SPEED:
-    {
-      UBYTE Tmp;
-
-      TestAndFloatSyncedMotors(Buf[1], FALSE);
-
-      CheckSpeedPowerLimits(&(Buf[2]));
-
-      for (Tmp = 0;Tmp < OUTPUTS;Tmp++)
-      {
-        if (Buf[1] & (1 << Tmp))
-        {
-          Motor[Tmp].Mutex        = TRUE;
-          Motor[Tmp].TargetSpeed  = (Buf[2]) * (Motor[Tmp].Pol);
-          if ((IDLE == Motor[Tmp].State) || (BRAKED == Motor[Tmp].State))
-          {
-            Motor[Tmp].TargetState = UNLIMITED_REG;
-          }
-          Motor[Tmp].Mutex = FALSE;
-        }
-      }
-    }
     break;
 
     case opOUTPUT_START:
     {
-      UBYTE Tmp;
-      for (Tmp = 0;Tmp < OUTPUTS;Tmp++)
-      {
-        if (Buf[1] & (1 << Tmp))
-        {
-          Motor[Tmp].Mutex = TRUE;
-          if ((IDLE == Motor[Tmp].State) || (BRAKED == Motor[Tmp].State))
-          {
-            Motor[Tmp].State  = Motor[Tmp].TargetState;
-          }
-          Motor[Tmp].Mutex = FALSE;
-        }
-      }
+      UBYTE Tmp = Buf[1];
+
+
+          Motor[Tmp].Mutex         =  TRUE;
+          startSubMove(&Motor[Tmp], getVal(Buf, 2), getVal(Buf, 6), getVal(Buf, 10), Buf[15]);
+          pMotor[Tmp].Speed         =  Motor[Tmp].moving;
+          Motor[Tmp].Mutex         =  FALSE;
+
     }
     break;
 
     case opOUTPUT_POLARITY:
-    {
-      UBYTE Tmp;
-
-      TestAndFloatSyncedMotors(Buf[1], FALSE);
-
-      for (Tmp = 0;Tmp < OUTPUTS;Tmp++)
-      {
-        if (Buf[1] & (1 << Tmp))
-        {
-          Motor[Tmp].Mutex = TRUE;
-          if (0 == (SBYTE)Buf[2])
-          {
-            /* 0 == Toggle */
-            Motor[Tmp].TargetPower = (Motor[Tmp].TargetPower) * -1;
-            Motor[Tmp].TargetSpeed = (Motor[Tmp].TargetSpeed) * -1;
-
-            if (1 == Motor[Tmp].Pol)
-            {
-              Motor[Tmp].Pol = -1;
-            }
-            else
-            {
-              Motor[Tmp].Pol =  1;
-            }
-          }
-          else
-          {
-
-            if (Motor[Tmp].Pol != (SBYTE)Buf[2])
-            {
-              Motor[Tmp].TargetPower  = (Motor[Tmp].TargetPower) * -1;
-              Motor[Tmp].TargetSpeed  = (Motor[Tmp].TargetSpeed) * -1;
-              Motor[Tmp].Pol          = Buf[2];
-            }
-          }
-          SetPower(Tmp, Motor[Tmp].TargetPower);
-          Motor[Tmp].Mutex = FALSE;
-        }
-      }
-    }
     break;
 
     case opOUTPUT_POSITION:
@@ -2495,598 +1322,23 @@ static ssize_t Device1Write(struct file *File,const char *Buffer,size_t Count,lo
     break;
 
     case opOUTPUT_STEP_POWER:
-    {
-      UBYTE       Tmp;
-      STEPPOWER   StepPower;
-
-      memcpy((UBYTE*)(&(StepPower.Cmd)), &Buf[0], sizeof(StepPower));
-
-      TestAndFloatSyncedMotors(StepPower.Nos, FALSE);
-
-      CheckSpeedPowerLimits(&(StepPower.Power));
-
-      // Adjust if there is inconsistency between power and steps
-      if (((StepPower.Power < 0) && ((StepPower.Step1 > 0) || (StepPower.Step2 > 0) || (StepPower.Step3 > 0))) ||
-          ((StepPower.Power > 0) && ((StepPower.Step1 < 0) || (StepPower.Step2 < 0) || (StepPower.Step3 < 0))))
-      {
-        StepPower.Step1 *= -1;
-        StepPower.Step2 *= -1;
-        StepPower.Step3 *= -1;
-      }
-
-      for (Tmp = 0;Tmp < OUTPUTS;Tmp++)
-      {
-        if (StepPower.Nos & (1 << Tmp))
-        {
-          Motor[Tmp].Mutex = TRUE;
-
-          StepPowerSteps[Tmp] = TachoSteps[Tmp];
-
-          ReadyStatus |= (0x01 << Tmp);   // Set Ready flag
-          TestStatus  |= (0x01 << Tmp);   // Set Test flag
-
-          Motor[Tmp].TargetPower   = StepPower.Power * SPEED_PWMCNT_REL * (Motor[Tmp].Pol);
-          Motor[Tmp].TachoCntUp    = StepPower.Step1 * (Motor[Tmp].Pol);
-          Motor[Tmp].TachoCntConst = StepPower.Step2 * (Motor[Tmp].Pol);
-          Motor[Tmp].TachoCntDown  = StepPower.Step3 * (Motor[Tmp].Pol);
-          Motor[Tmp].TargetBrake   = StepPower.Brake;
-          if (Motor[Tmp].TargetPower >= 0)
-          {
-            Motor[Tmp].Dir = 1;
-          }
-          else
-          {
-            Motor[Tmp].Dir = -1;
-          }
-
-          TimeOutSpeed0[Tmp] = FREERunning24bittimer;
-
-          if (FALSE == StepPowerCheckTachoCntUp(Tmp))
-          {
-            SLONG AdjustTachoValue = 0;
-            if (FALSE == StepPowerCheckTachoCntConst(Tmp, AdjustTachoValue))
-            {
-              StepPowerCheckTachoCntDown(Tmp, AdjustTachoValue);
-            }
-          }
-          Motor[Tmp].Mutex = FALSE;
-        }
-      }
-    }
     break;
 
     case opOUTPUT_TIME_POWER:
-    {
-      UBYTE       Tmp;
-      TIMEPOWER   TimePower;
-      SLONG       Inc;
-
-      memcpy((UBYTE*)(&(TimePower.Cmd)), &Buf[0], sizeof(TimePower));
-
-      TestAndFloatSyncedMotors(TimePower.Nos, FALSE);
-
-      // Adjust if there is inconsistency between power and Time
-      if (((TimePower.Power < 0) && ((TimePower.Time1 > 0) || (TimePower.Time2 > 0) || (TimePower.Time3 > 0))) ||
-          ((TimePower.Power > 0) && ((TimePower.Time1 < 0) || (TimePower.Time2 < 0) || (TimePower.Time3 < 0))))
-      {
-        TimePower.Time1 *= -1;
-        TimePower.Time2 *= -1;
-        TimePower.Time3 *= -1;
-      }
-
-      if ((TimePower.Time1 > 0) || (TimePower.Time2 > 0) || (TimePower.Time3 > 0))
-      {
-        Inc =  SOFT_TIMER_MS;
-      }
-      else
-      {
-        Inc = -SOFT_TIMER_MS;
-      }
-
-      for (Tmp = 0;Tmp < OUTPUTS;Tmp++)
-      {
-        if (TimePower.Nos & (1 << Tmp))
-        {
-          Motor[Tmp].Mutex = TRUE;
-
-          StepPowerSteps[Tmp]   =  TimerSteps[Tmp];
-          Motor[Tmp].TimeInc    =  Inc * (Motor[Tmp].Pol);
-          *StepPowerSteps[Tmp]  =  0;
-
-          ReadyStatus |= (0x01 << Tmp);   // Set Ready flag
-          TestStatus  |= (0x01 << Tmp);   // Set Test flag
-
-          Motor[Tmp].TargetPower   = TimePower.Power * SPEED_PWMCNT_REL * (Motor[Tmp].Pol);
-          Motor[Tmp].TachoCntUp    = TimePower.Time1 * (Motor[Tmp].Pol);
-          Motor[Tmp].TachoCntConst = TimePower.Time2 * (Motor[Tmp].Pol);
-          Motor[Tmp].TachoCntDown  = TimePower.Time3 * (Motor[Tmp].Pol);
-          Motor[Tmp].TargetBrake   = TimePower.Brake;
-
-          if (Motor[Tmp].TargetPower >= 0)
-          {
-            Motor[Tmp].Dir = 1;
-          }
-          else
-          {
-            Motor[Tmp].Dir = -1;
-          }
-
-          TimeOutSpeed0[Tmp] = FREERunning24bittimer;
-
-          if (FALSE == StepPowerCheckTachoCntUp(Tmp))
-          {
-            SLONG AdjustTachoValue = 0;
-            if (FALSE == StepPowerCheckTachoCntConst(Tmp, AdjustTachoValue))
-            {
-              StepPowerCheckTachoCntDown(Tmp, AdjustTachoValue);
-            }
-          }
-          Motor[Tmp].Mutex = FALSE;
-        }
-      }
-    }
     break;
 
     case opOUTPUT_STEP_SPEED:
-    {
-      UBYTE       Tmp;
-      STEPSPEED   StepSpeed;
-
-      memcpy((UBYTE*)(&(StepSpeed.Cmd)), &Buf[0], sizeof(StepSpeed));
-
-      TestAndFloatSyncedMotors(StepSpeed.Nos, FALSE);
-
-      CheckSpeedPowerLimits(&(StepSpeed.Speed));
-
-      // Adjust if there is inconsistency between Speed and Steps
-      if (((StepSpeed.Speed < 0) && ((StepSpeed.Step1 > 0) || (StepSpeed.Step2 > 0) || (StepSpeed.Step3 > 0))) ||
-          ((StepSpeed.Speed > 0) && ((StepSpeed.Step1 < 0) || (StepSpeed.Step2 < 0) || (StepSpeed.Step3 < 0))))
-      {
-        StepSpeed.Step1 *= -1;
-        StepSpeed.Step2 *= -1;
-        StepSpeed.Step3 *= -1;
-      }
-
-      for (Tmp = 0;Tmp < OUTPUTS;Tmp++)
-      {
-        if (StepSpeed.Nos & (1 << Tmp))
-        {
-          Motor[Tmp].Mutex = TRUE;
-
-          StepPowerSteps[Tmp] = TachoSteps[Tmp];
-
-          ReadyStatus |= (0x01 << Tmp);   // Set Ready flag
-          TestStatus  |= (0x01 << Tmp);   // Set Test flag
-
-          Motor[Tmp].TargetPower   = StepSpeed.Speed * (Motor[Tmp].Pol);
-          Motor[Tmp].TachoCntUp    = StepSpeed.Step1 * (Motor[Tmp].Pol);
-          Motor[Tmp].TachoCntConst = StepSpeed.Step2 * (Motor[Tmp].Pol);
-          Motor[Tmp].TachoCntDown  = StepSpeed.Step3 * (Motor[Tmp].Pol);
-          Motor[Tmp].TargetBrake   = StepSpeed.Brake;
-
-          if (Motor[Tmp].TargetPower >= 0)
-          {
-            Motor[Tmp].Dir = 1;
-          }
-          else
-          {
-            Motor[Tmp].Dir = -1;
-          }
-
-          TimeOutSpeed0[Tmp] = FREERunning24bittimer;
-
-          if (FALSE == StepSpeedCheckTachoCntUp(Tmp))
-          {
-            SLONG AdjustTachoValue = 0;
-            if (FALSE == StepSpeedCheckTachoCntConst(Tmp, AdjustTachoValue))
-            {
-              StepSpeedCheckTachoCntDown(Tmp, AdjustTachoValue);
-            }
-          }
-          Motor[Tmp].TargetSpeed = Motor[Tmp].TargetPower;
-          Motor[Tmp].Mutex       = FALSE;
-        }
-      }
-    }
     break;
 
     case opOUTPUT_TIME_SPEED:
-    {
-      UBYTE       Tmp;
-      SLONG       Inc;
-      TIMESPEED   TimeSpeed;
-
-
-      memcpy((UBYTE*)(&(TimeSpeed.Cmd)), &Buf[0], sizeof(TimeSpeed));
-
-      TestAndFloatSyncedMotors(TimeSpeed.Nos, FALSE);
-
-      CheckSpeedPowerLimits(&(TimeSpeed.Speed));
-
-      // Adjust if there is inconsistency between Speed and Time
-      if (((TimeSpeed.Speed < 0) && ((TimeSpeed.Time1 > 0) || (TimeSpeed.Time2 > 0) || (TimeSpeed.Time3 > 0))) ||
-          ((TimeSpeed.Speed > 0) && ((TimeSpeed.Time1 < 0) || (TimeSpeed.Time2 < 0) || (TimeSpeed.Time3 < 0))))
-      {
-        TimeSpeed.Time1 *= -1;
-        TimeSpeed.Time2 *= -1;
-        TimeSpeed.Time3 *= -1;
-      }
-
-      if ((TimeSpeed.Time1 > 0) || (TimeSpeed.Time2 > 0) || (TimeSpeed.Time3 > 0))
-      {
-        Inc = SOFT_TIMER_MS;
-      }
-      else
-      {
-        Inc = -SOFT_TIMER_MS;
-      }
-
-      for (Tmp = 0;Tmp < OUTPUTS;Tmp++)
-      {
-        if (TimeSpeed.Nos & (1 << Tmp))
-        {
-          Motor[Tmp].Mutex = TRUE;
-
-          StepPowerSteps[Tmp]   =  TimerSteps[Tmp];
-          Motor[Tmp].TimeInc    =  Inc * (Motor[Tmp].Pol);
-          *StepPowerSteps[Tmp]  =  0;
-
-          ReadyStatus |= (0x01 << Tmp);   // Set Ready flag
-          TestStatus  |= (0x01 << Tmp);   // Set Test flag
-
-          Motor[Tmp].TargetPower   = TimeSpeed.Speed * (Motor[Tmp].Pol);
-          Motor[Tmp].TachoCntUp    = TimeSpeed.Time1 * (Motor[Tmp].Pol);
-          Motor[Tmp].TachoCntConst = TimeSpeed.Time2 * (Motor[Tmp].Pol);
-          Motor[Tmp].TachoCntDown  = TimeSpeed.Time3 * (Motor[Tmp].Pol);
-          Motor[Tmp].TargetBrake   = TimeSpeed.Brake;
-
-          if (Motor[Tmp].TargetPower >= 0)
-          {
-            Motor[Tmp].Dir = 1;
-          }
-          else
-          {
-            Motor[Tmp].Dir = -1;
-          }
-
-          TimeOutSpeed0[Tmp] = FREERunning24bittimer;
-
-          if (FALSE == StepSpeedCheckTachoCntUp(Tmp))
-          {
-            SLONG AdjustTachoValue = 0;
-            if (FALSE == StepSpeedCheckTachoCntConst(Tmp, AdjustTachoValue))
-            {
-              StepSpeedCheckTachoCntDown(Tmp, AdjustTachoValue);
-            }
-          }
-          Motor[Tmp].TargetSpeed = Motor[Tmp].TargetPower;
-          Motor[Tmp].Mutex       = FALSE;
-        }
-      }
-    }
     break;
 
     case opOUTPUT_STEP_SYNC:
-    {
-      UBYTE       No  = 0;
-      UBYTE       Tmp;
-      STEPSYNC    StepSync;
 
-      memcpy((UBYTE*)(&(StepSync.Cmd)), &Buf[0], sizeof(StepSync));
-
-      TestAndFloatSyncedMotors(StepSync.Nos, TRUE);
-
-      //Check if exceeding speed limits
-      CheckSpeedPowerLimits(&(StepSync.Speed));
-
-      if (((StepSync.Speed < 0) && (StepSync.Step > 0)) ||
-          ((StepSync.Speed > 0) && (StepSync.Step < 0)))
-      {
-        StepSync.Step *= -1;
-      }
-
-      for (Tmp = 0;Tmp < OUTPUTS;Tmp++)
-      {
-
-        if (StepSync.Nos & (1 << Tmp))
-        {
-          Motor[Tmp].Mutex = TRUE;
-
-          ReadyStatus           |= (0x01 << Tmp);   // Set Ready flag
-          TestStatus            |= (0x01 << Tmp);   // Set Test flag
-          StepPowerSteps[Tmp]    = TachoSteps[Tmp];
-          Motor[Tmp].TargetBrake =  StepSync.Brake;
-
-          if (0 == StepSync.Step)
-          {
-            // If run forever
-            *StepPowerSteps[Tmp] = 0;
-          }
-
-          if (0 == StepSync.Turn)
-          {
-            // Synced motors are going straight
-            Motor[Tmp].TargetPower   = StepSync.Speed;
-            Motor[Tmp].TurnRatio     = 100;
-            Motor[Tmp].TachoCntConst = StepSync.Step;
-            SyncMNos[No]             = Tmp;
-            TimeOutSpeed0[Tmp]       = FREERunning24bittimer;
-            MaxSyncSpeed             = StepSync.Speed;
-
-            // Find the direction the main motor will drive
-            if (0 <= StepSync.Speed)
-            {
-              Motor[Tmp].Dir = NON_INV;
-            }
-            else
-            {
-              Motor[Tmp].Dir = INV;
-            }
-
-            if (0 == No)
-            {
-              Motor[Tmp].State = LIMITED_STEP_SYNC;
-            }
-            else
-            {
-              Motor[Tmp].State = SYNCED_SLAVE;
-              Motor[Tmp].Dir   = NON_INV;
-            }
-          }
-          else
-          {
-            // Turning
-            UBYTE MotorIndex;
-
-            if (0 < StepSync.Turn)
-            {
-              MotorIndex = No;
-            }
-            else
-            {
-              // Invert if turning left (right motor runs fastest)
-              MotorIndex = 1 - No;
-            }
-
-            if (0 == MotorIndex)
-            {
-              if (StepSync.Speed > 0)
-              {
-                Motor[Tmp].Dir = NON_INV;
-              }
-              else
-              {
-                Motor[Tmp].Dir = INV;
-              }
-              Motor[Tmp].TurnRatio = StepSync.Turn;
-            }
-            else
-            {
-              if ((StepSync.Turn < 100) && (StepSync.Turn > -100))
-              {
-                Motor[Tmp].Dir = NON_INV;
-
-                if (StepSync.Turn > 0)       // Invert the ratio in the first quarter
-                {
-                  Motor[Tmp].TurnRatio = 100 - StepSync.Turn;
-                }
-                else
-                {
-                  Motor[Tmp].TurnRatio = -100 - StepSync.Turn;
-                }
-              }
-              else
-              {
-                if ((StepSync.Turn >= 100) || (StepSync.Turn <= -100))
-                {
-                  // Both motors are turning
-                  Motor[Tmp].Dir = INV;
-                  if (StepSync.Turn <= -100)
-                  {
-                    Motor[Tmp].TurnRatio = (StepSync.Turn + 100);
-                  }
-                  else
-                  {
-                    Motor[Tmp].TurnRatio = (StepSync.Turn - 100);
-                  }
-                }
-              }
-            }
-
-            SyncMNos[MotorIndex] = Tmp;
-
-            if (0 > StepSync.Turn)
-            {
-              Motor[Tmp].TurnRatio *= -1;
-            }
-
-            if (0 == MotorIndex)
-            {
-              Motor[Tmp].TargetPower   = StepSync.Speed;
-              Motor[Tmp].TachoCntConst = StepSync.Step;
-              MaxSyncSpeed             = StepSync.Speed;
-              Motor[Tmp].State         = LIMITED_DIFF_TURN_SYNC;
-            }
-            else
-            {
-              Motor[Tmp].TargetPower   = (SLONG)(((SLONG)(StepSync.Speed) * (SLONG)(Motor[Tmp].TurnRatio))/((SLONG)100 * Motor[Tmp].Dir));
-              Motor[Tmp].TachoCntConst = ((StepSync.Step  * (SLONG)(Motor[Tmp].TurnRatio))/100) * Motor[Tmp].Dir;
-              Motor[Tmp].State         = SYNCED_SLAVE;
-            }
-
-            TimeOutSpeed0[Tmp] = FREERunning24bittimer;
-          }
-          No++;
-        }
-      }
-      Motor[SyncMNos[0]].Mutex      =  FALSE;
-      Motor[SyncMNos[1]].Mutex      =  FALSE;
-    }
     break;
 
     case opOUTPUT_TIME_SYNC:
-    {
-      SLONG     Inc;
-      UBYTE     No  = 0;
-      UBYTE     Tmp;
-      TIMESYNC  TimeSync;
 
-      memcpy((UBYTE*)(&(TimeSync.Cmd)), &Buf[0], sizeof(TimeSync));
-
-      TestAndFloatSyncedMotors(TimeSync.Nos, TRUE);
-
-      //Check if exceeding speed limits
-      CheckSpeedPowerLimits(&(TimeSync.Speed));
-
-      if (((TimeSync.Speed < 0) && (TimeSync.Time > 0)) ||
-          ((TimeSync.Speed > 0) && (TimeSync.Time < 0)))
-      {
-        TimeSync.Time *= -1;
-      }
-
-      if (TimeSync.Time > 0)
-      {
-        Inc = SOFT_TIMER_MS;
-      }
-      else
-      {
-        Inc = -SOFT_TIMER_MS;
-      }
-
-      for (Tmp = 0;Tmp < OUTPUTS;Tmp++)
-      {
-        if (TimeSync.Nos & (1 << Tmp))
-        {
-          Motor[Tmp].Mutex       =  TRUE;
-
-          ReadyStatus           |=  (0x01 << Tmp);   // Set Ready flag
-          TestStatus            |=  (0x01 << Tmp);   // Set Test flag
-
-          StepPowerSteps[Tmp]    =  TimerSteps[Tmp];
-          Motor[Tmp].TimeInc     =  Inc;
-          *TimerSteps[Tmp]       =  0;
-
-          Motor[Tmp].TargetBrake =  TimeSync.Brake;
-
-          if (0 == TimeSync.Turn)
-          {
-            // Synced motors are going straight
-            Motor[Tmp].TargetPower   = TimeSync.Speed;
-            Motor[Tmp].TurnRatio     = 100;
-            Motor[Tmp].TachoCntConst = TimeSync.Time;
-            SyncMNos[No]             = Tmp;
-            TimeOutSpeed0[Tmp]       = FREERunning24bittimer;
-            MaxSyncSpeed             = TimeSync.Speed;
-
-            // Find the direction the main motor will drive
-            if (0 <= TimeSync.Speed)
-            {
-              Motor[Tmp].Dir = NON_INV;
-            }
-            else
-            {
-              Motor[Tmp].Dir = INV;
-            }
-
-            if (0 == No)
-            {
-              Motor[Tmp].State = LIMITED_STEP_SYNC;
-            }
-            else
-            {
-              Motor[Tmp].State = SYNCED_SLAVE;
-              Motor[Tmp].Dir   = NON_INV;
-            }
-          }
-          else
-          {
-            //   Turning
-            UBYTE MotorIndex;
-
-            if (0 < TimeSync.Turn)
-            {
-              MotorIndex = No;
-            }
-            else
-            {
-              // Invert if turning left (right motor runs fastest)
-              MotorIndex = 1 - No;
-            }
-
-            if (0 == MotorIndex)
-            {
-              if (TimeSync.Speed > 0)
-              {
-                Motor[Tmp].Dir = NON_INV;
-              }
-              else
-              {
-                Motor[Tmp].Dir = INV;
-              }
-              Motor[Tmp].TurnRatio = TimeSync.Turn;
-            }
-            else
-            {
-              if ((TimeSync.Turn < 100) && (TimeSync.Turn > -100))
-              {
-                Motor[Tmp].Dir = NON_INV;
-
-                if (TimeSync.Turn > 0)       // Invert the ratio in the first quarter
-                {
-                  Motor[Tmp].TurnRatio = 100 - TimeSync.Turn;
-                }
-                else
-                {
-                  Motor[Tmp].TurnRatio = -100 - TimeSync.Turn;
-                }
-              }
-              else
-              {
-                if ((TimeSync.Turn >= 100) || (TimeSync.Turn <= -100))
-                {
-                  // Both motors are turning
-                  Motor[Tmp].Dir = INV;
-                  if (TimeSync.Turn <= -100)
-                  {
-                    Motor[Tmp].TurnRatio = (TimeSync.Turn + 100);
-                  }
-                  else
-                  {
-                    Motor[Tmp].TurnRatio = (TimeSync.Turn - 100);
-                  }
-                }
-              }
-            }
-
-            SyncMNos[MotorIndex] = Tmp;
-
-            if (0 > TimeSync.Turn)
-            {
-              Motor[Tmp].TurnRatio *= -1;
-            }
-
-            if (0 == MotorIndex)
-            {
-              Motor[Tmp].TargetPower   = TimeSync.Speed;
-              Motor[Tmp].TachoCntConst = TimeSync.Time;
-              MaxSyncSpeed             = TimeSync.Speed;
-              Motor[Tmp].State         = LIMITED_DIFF_TURN_SYNC;
-            }
-            else
-            {
-              Motor[Tmp].TargetPower    = (SLONG)(((SLONG)(TimeSync.Speed) * (SLONG)(Motor[Tmp].TurnRatio))/((SLONG)100 * Motor[Tmp].Dir));
-              Motor[Tmp].TachoCntConst  = TimeSync.Time  * Motor[Tmp].Dir;
-              Motor[Tmp].TimeInc       *= Motor[Tmp].Dir;
-              Motor[Tmp].State          = SYNCED_SLAVE;
-            }
-            TimeOutSpeed0[Tmp] = FREERunning24bittimer;
-          }
-          No++;
-        }
-      }
-      Motor[SyncMNos[0]].Mutex      =  FALSE;
-      Motor[SyncMNos[1]].Mutex      =  FALSE;
-    }
     break;
 
     default:
@@ -3208,18 +1460,13 @@ static int Device1Init(void)
     {
       memset(&Motor[Tmp], 0, sizeof(MOTOR));
 
-      Motor[Tmp].TargetBrake  =  COAST;
-      Motor[Tmp].Pol          =  1;
       Motor[Tmp].Direction    =  FORWARD;
       Motor[Tmp].Type         =  TYPE_NONE;
       Motor[Tmp].State        =  IDLE;
       Motor[Tmp].TargetState  =  UNLIMITED_UNREG; //default startup state
       Motor[Tmp].Mutex        =  FALSE;
-      Motor[Tmp].BrakeAfter   =  FALSE;
 
-      CLEARTachoArray(Tmp);
       SETMotorType(Tmp, TYPE_NONE);                  //  Motor types can be: TYPE_TACHO, TYPE_NONE, TYPE_MINITACHO
-      SETAvgTachoCount(Tmp, 0);                      //  At initialisation speed is assumed to be zero
     }
 
     /* Float the tacho inputs */
@@ -3229,9 +1476,6 @@ static int Device1Init(void)
       OutputFloat(Tmp,DIR);
       SetCoast(Tmp);
     }
-
-    SyncMNos[0] = UNUSED_SYNC_MOTOR;
-    SyncMNos[1] = UNUSED_SYNC_MOTOR;
 
     /* Setup the PWM peripheals */
     SETUPPwmModules;
@@ -3377,7 +1621,6 @@ void    SetGpioRisingIrq(UBYTE PinNo, irqreturn_t (*IntFuncPtr)(int, void *))
  */
 static    irqreturn_t IntA (int irq, void * dev)
 {
-  UBYTE   TmpPtr;
   ULONG   IntAState;
   ULONG   DirAState;
   ULONG   Timer;
@@ -3387,60 +1630,15 @@ static    irqreturn_t IntA (int irq, void * dev)
   DirAState  =  READDirA;
   Timer      =  FREERunning24bittimer;
 
-  TmpPtr = (TachoSamples[0].ArrayPtr + 1) & (NO_OF_TACHO_SAMPLES-1);
-  TachoSamples[0].TachoArray[TmpPtr]  =  Timer;
-  TachoSamples[0].ArrayPtr            =  TmpPtr;
-
-  if ((35 < Motor[0].Speed) || (-35 > Motor[0].Speed))
-  {
-    if (FORWARD == Motor[0].Direction)
-    {
-      (Motor[0].IrqTacho)++;
-    }
-    else
-    {
-      (Motor[0].IrqTacho)--;
-    }
-    if (Motor[0].DirChgPtr < SamplesPerSpeed[0][SAMPLES_ABOVE_SPEED_75])
-    {
-      Motor[0].DirChgPtr++;
-    }
-  }
-  else
-  {
     if (IntAState)
     {
       if(DirAState)
       {
-        if (FORWARD == Motor[0].Direction)
-        {
-          if (Motor[0].DirChgPtr < SamplesPerSpeed[0][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[0].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[0].DirChgPtr = 0;
-        }
         (Motor[0].IrqTacho)++;
         Motor[0].Direction = FORWARD;
       }
       else
       {
-        if (BACKWARD == Motor[0].Direction)
-        {
-          TachoSamples[0].TachoArray[TmpPtr] = Timer;
-          TachoSamples[0].ArrayPtr = TmpPtr;
-          if (Motor[0].DirChgPtr < SamplesPerSpeed[0][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[0].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[0].DirChgPtr = 0;
-        }
         (Motor[0].IrqTacho)--;
         Motor[0].Direction = BACKWARD;
       }
@@ -3449,45 +1647,22 @@ static    irqreturn_t IntA (int irq, void * dev)
     {
       if(DirAState)
       {
-        if (BACKWARD == Motor[0].Direction)
-        {
-          if (Motor[0].DirChgPtr < SamplesPerSpeed[0][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[0].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[0].DirChgPtr = 0;
-        }
         (Motor[0].IrqTacho)--;
         Motor[0].Direction = BACKWARD;
       }
       else
       {
-        if (FORWARD == Motor[0].Direction)
-        {
-          if (Motor[0].DirChgPtr < SamplesPerSpeed[0][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[0].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[0].DirChgPtr = 0;
-        }
         (Motor[0].IrqTacho)++;
         Motor[0].Direction = FORWARD;
       }
     }
-  }
+
   return IRQ_HANDLED;
 }
 
 
 static    irqreturn_t IntB (int irq, void * dev)
 {
-  UBYTE   volatile TmpPtr;
   ULONG   volatile IntBState;
   ULONG   volatile DirBState;
   ULONG   volatile Timer;
@@ -3497,59 +1672,15 @@ static    irqreturn_t IntB (int irq, void * dev)
   DirBState  =  READDirB;
   Timer      =  FREERunning24bittimer;
 
-  TmpPtr = (TachoSamples[1].ArrayPtr + 1) & (NO_OF_TACHO_SAMPLES-1);
-  TachoSamples[1].TachoArray[TmpPtr]  =  Timer;
-  TachoSamples[1].ArrayPtr            =  TmpPtr;
-
-  if ((35 < Motor[1].Speed) || (-35 > Motor[1].Speed))
-  {
-    if (FORWARD == Motor[1].Direction)
-    {
-      (Motor[1].IrqTacho)++;
-    }
-    else
-    {
-      (Motor[1].IrqTacho)--;
-    }
-
-    if (Motor[1].DirChgPtr < SamplesPerSpeed[1][SAMPLES_ABOVE_SPEED_75])
-    {
-      Motor[1].DirChgPtr++;
-    }
-  }
-  else
-  {
     if (IntBState)
     {
       if(DirBState)
       {
-        if (FORWARD == Motor[1].Direction)
-        {
-          if (Motor[1].DirChgPtr < SamplesPerSpeed[1][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[1].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[1].DirChgPtr = 0;
-        }
         (Motor[1].IrqTacho)++;
         Motor[1].Direction = FORWARD;
       }
       else
       {
-        if (BACKWARD == Motor[1].Direction)
-        {
-          if (Motor[1].DirChgPtr < SamplesPerSpeed[1][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[1].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[1].DirChgPtr = 0;
-        }
         (Motor[1].IrqTacho)--;
         Motor[1].Direction = BACKWARD;
       }
@@ -3558,45 +1689,22 @@ static    irqreturn_t IntB (int irq, void * dev)
     {
       if(DirBState)
       {
-        if (BACKWARD == Motor[1].Direction)
-        {
-          if (Motor[1].DirChgPtr < SamplesPerSpeed[1][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[1].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[1].DirChgPtr = 0;
-        }
         (Motor[1].IrqTacho)--;
         Motor[1].Direction = BACKWARD;
       }
       else
       {
-        if (FORWARD == Motor[1].Direction)
-        {
-          if (Motor[1].DirChgPtr < SamplesPerSpeed[1][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[1].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[1].DirChgPtr = 0;
-        }
         (Motor[1].IrqTacho)++;
         Motor[1].Direction = FORWARD;
       }
     }
-  }
+
   return IRQ_HANDLED;
 }
 
 
 static    irqreturn_t IntC (int irq, void * dev)
 {
-  UBYTE   TmpPtr;
   ULONG   IntCState;
   ULONG   DirCState;
   ULONG   Timer;
@@ -3606,58 +1714,15 @@ static    irqreturn_t IntC (int irq, void * dev)
   DirCState  =  READDirC;
   Timer      =  FREERunning24bittimer;
 
-  TmpPtr = (TachoSamples[2].ArrayPtr + 1) & (NO_OF_TACHO_SAMPLES-1);
-  TachoSamples[2].TachoArray[TmpPtr]  =  Timer;
-  TachoSamples[2].ArrayPtr            =  TmpPtr;
-
-  if ((35 < Motor[2].Speed) || (-35 > Motor[2].Speed))
-  {
-    if (FORWARD == Motor[2].Direction)
-    {
-      (Motor[2].IrqTacho)++;
-    }
-    else
-    {
-      (Motor[2].IrqTacho)--;
-    }
-    if (Motor[2].DirChgPtr < SamplesPerSpeed[2][SAMPLES_ABOVE_SPEED_75])
-    {
-      Motor[2].DirChgPtr++;
-    }
-  }
-  else
-  {
     if (IntCState)
     {
       if(DirCState)
       {
-        if (FORWARD == Motor[2].Direction)
-        {
-          if (Motor[2].DirChgPtr < SamplesPerSpeed[2][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[2].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[2].DirChgPtr = 0;
-        }
         (Motor[2].IrqTacho)++;
         Motor[2].Direction = FORWARD;
       }
       else
       {
-        if (BACKWARD == Motor[2].Direction)
-        {
-          if (Motor[2].DirChgPtr < SamplesPerSpeed[2][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[2].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[2].DirChgPtr = 0;
-        }
         (Motor[2].IrqTacho)--;
         Motor[2].Direction = BACKWARD;
       }
@@ -3666,45 +1731,22 @@ static    irqreturn_t IntC (int irq, void * dev)
     {
       if(DirCState)
       {
-        if (BACKWARD == Motor[2].Direction)
-        {
-          if (Motor[2].DirChgPtr < SamplesPerSpeed[2][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[2].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[2].DirChgPtr = 0;
-        }
         (Motor[2].IrqTacho)--;
         Motor[2].Direction = BACKWARD;
       }
       else
       {
-        if (FORWARD == Motor[2].Direction)
-        {
-          if (Motor[2].DirChgPtr < SamplesPerSpeed[2][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[2].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[2].DirChgPtr = 0;
-        }
         (Motor[2].IrqTacho)++;
         Motor[2].Direction = FORWARD;
       }
     }
-  }
+
   return IRQ_HANDLED;
 }
 
 
 static    irqreturn_t IntD (int irq, void * dev)
 {
-  UBYTE   TmpPtr;
   ULONG   IntDState;
   ULONG   DirDState;
   ULONG   Timer;
@@ -3714,58 +1756,15 @@ static    irqreturn_t IntD (int irq, void * dev)
   DirDState  =  READDirD;
   Timer      =  FREERunning24bittimer;
 
-  TmpPtr = (TachoSamples[3].ArrayPtr + 1) & (NO_OF_TACHO_SAMPLES-1);
-  TachoSamples[3].TachoArray[TmpPtr]  =  Timer;
-  TachoSamples[3].ArrayPtr            =  TmpPtr;
-
-  if ((35 < Motor[3].Speed) || (-35 > Motor[3].Speed))
-  {
-    if (FORWARD == Motor[3].Direction)
-    {
-      (Motor[3].IrqTacho)++;
-    }
-    else
-    {
-      (Motor[3].IrqTacho)--;
-    }
-    if (Motor[3].DirChgPtr < SamplesPerSpeed[3][SAMPLES_ABOVE_SPEED_75])
-    {
-      Motor[3].DirChgPtr++;
-    }
-  }
-  else
-  {
     if (IntDState)
     {
       if(DirDState)
       {
-        if (FORWARD == Motor[3].Direction)
-        {
-          if (Motor[3].DirChgPtr < SamplesPerSpeed[3][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[3].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[3].DirChgPtr = 0;
-        }
         (Motor[3].IrqTacho)++;
         Motor[3].Direction = FORWARD;
       }
       else
       {
-        if (BACKWARD == Motor[3].Direction)
-        {
-          if (Motor[3].DirChgPtr < SamplesPerSpeed[3][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[3].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[3].DirChgPtr = 0;
-        }
         (Motor[3].IrqTacho)--;
         Motor[3].Direction = BACKWARD;
       }
@@ -3774,280 +1773,20 @@ static    irqreturn_t IntD (int irq, void * dev)
     {
       if(DirDState)
       {
-        if (BACKWARD == Motor[3].Direction)
-        {
-          if (Motor[3].DirChgPtr < SamplesPerSpeed[3][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[3].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[3].DirChgPtr = 0;
-        }
         (Motor[3].IrqTacho)--;
         Motor[3].Direction = BACKWARD;
       }
       else
       {
-        if (FORWARD == Motor[3].Direction)
-        {
-          if (Motor[3].DirChgPtr < SamplesPerSpeed[3][SAMPLES_ABOVE_SPEED_75])
-          {
-            Motor[3].DirChgPtr++;
-          }
-        }
-        else
-        {
-          Motor[3].DirChgPtr = 0;
-        }
         (Motor[3].IrqTacho)++;
         Motor[3].Direction = FORWARD;
       }
     }
-  }
+
   return IRQ_HANDLED;
 }
 
 
-/*! \page PwmModule
- *
- *  <hr size="1"/>
- *  <b>     write </b>
- */
-/*! \brief    dCalculateSpeed
- *
- *  - Calculates the actual speed for a motor
- *
- *  - Returns TRUE when a new speed has been calculated, FALSE if otherwise
- *
- *  - Time is sampled every edge on the tacho
- *      - Timer used is 64bit timer plus (P3) module (dual 32bit un-chained mode)
- *      - 64bit timer is running 33Mhz (24Mhz (Osc) * 22 (Multiplier) / 2 (Post divider) / 2 (DIV2)) / 4 (T64 prescaler)
- *      - When reading the timer it is divided by 256 => timer is a factor 256 slower
- *
- *
- *  - Tacho counter is updated on every edge of the tacho INTx pin signal
- *  - Time capture is updated on every edge of the tacho INTx pin signal
- *
- *
- *  - Speed is calculated from the following parameters
- *
- *      - Time is measured edge to edge of the tacho interrupt pin. Average of time is always minimum 2 pulses
- *        (1 high + 1 low period or 1 low + 1 high period) because the duty of the high and low period of the
- *        tacho pulses are not always 50%.
- *        - Average of the large motor
- *          - Above speed 80 it is:          64 samples
- *          - Between speed 60 - 80 it is:   32 samples
- *          - Between speed 40 - 60 it is:   16 samples
- *          - below speed 40 it is:           4 samples
- *        - Average of the medium motor
- *          - Above speed 80 it is:          16 samples
- *          - Between speed 60 - 80 it is:    8 samples
- *          - Between speed 40 - 60 it is:    4 samples
- *          - below speed 40 it is:           2 sample
- *
- *      - Number of samples is always determined based on 1 sample meaning 1 low period nor 1 high period,
- *        this is to enable fast adoption to changes in speed. Medium motor has the critical timing because
- *        it can change speed and direction very fast.
- *
- *      - Large Motor
- *        - Maximum speed of the Large motor is approximately 2mS per tacho pulse (low + high period)
- *          resulting in minimum timer value of: 2mS / (1/(33MHz / 256)) = 256 T64 timer ticks.
- *          Because 1 sample is based on only half a period minimum speed is 256/2 = 128.
- *        - Minimum speed of the large motor is a factor of 100 less than max. speed
- *          max. speed timer ticks * 100 => 256 * 100 = 25600 T64 timer ticks
- *          Because 1 sample is based on only half a period minimum speed is 25600/2 = 12800.
- *
- *
- *      - Medium Motor
- *        - Maximum speed of the medium motor is approximately 1,25mS per tacho pulse (low + high period)
- *          resulting in minimum timer value og: 1,25mS / (1/(33MHz / 256)) = 162 (approximately)
- *          Because 1 sample is based on only half a period minimum speed is 162/2 = 81.
- *        - Minimum speed of the medium motor is a factor of 100 less than max. speed
- *          max. speed timer ticks * 100 => 162 * 100 = 16200 T64 timer ticks
- *          Because 1 sample is based on only half a period minimum speed is 16200/2 = 8100.
- *
- *      - Actual speed is then calculated as:
- *        - Medium motor:
- *          8100 * number of samples / actual time elapsed for number of samples
- *        - Large motor:
- *          12800 * number of samples / actual time elapsed for number of samples
- *
- *
- *  - Parameters:
- *    - Input:
- *      - No        : Motor output number
- *      - *pSpeed   : Pointer to the speed value
- *
- *    - Output:
- *      - Status    : Indication of new speed available or not
- *
- *
- *  - Tacho pulse examples:
- *
- *
- *    - Normal
- *
- *      ----       ------       ------       ------
- *          |     |      |     |      |     |      |
- *          |     |      |     |      |     |      |
- *          -------      -------      -------      --- DIRx signal
- *
- *
- *         ----       ------       ------       ------ INTx signal
- *             |     |      |     |      |     |
- *             |     |      |     |      |     |
- *             -------      -------      -------
- *
- *             ^     ^      ^     ^      ^     ^
- *             |     |      |     |      |     |
- *             |   Timer    |   Timer    |   Timer
- *             |     +      |     +      |     +
- *             |  Counter   |  Counter   |  Counter
- *             |            |            |
- *           Timer        Timer        Timer
- *             +            +            +
- *          Counter      Counter      Counter
- *
- *
- *
- *    - Direction change
- *
- *      DirChgPtr variable is used to indicate how many timer samples have been sampled
- *      since direction has been changed. DirChgPtr is set to 0 when tacho interrupt detects
- *      direction change and then it is counted up for every timer sample. So when DirChgPtr
- *      has the value of 2 then there must be 2 timer samples in the the same direction
- *      available.
- *
- *      ----       ------       ------       ------       ---
- *          |     |      |     |      |     |      |     |
- *          |     |      |     |      |     |      |     |
- *          -------      -------      -------      -------   DIRx signal
- *
- *
- *       ------       -------------       ------       ------INTx signal
- *             |     |             |     |      |     |
- *             |     |             |     |      |     |
- *             -------             -------      -------
- *
- *             ^     ^             ^     ^      ^     ^
- *             |     |             |     |      |     |
- *           Timer   |           Timer   |    Timer   |
- *             +     |             +     |      +     |
- *          Counter  |          Counter  |   Counter  |
- *             +     |             +     |      +     |
- *       DirChgPtr++ |       DirChgPtr=0 |DirChgPtr++ |
- *                 Timer               Timer        Timer
- *                   +                   +            +
- *                Counter             Counter      Counter
- *                   +                   +            +
- *               DirChgPtr++         DirChgPtr++  DirChgPtr++
- *
- *
- *
- *
- *      ----       ------             ------        ----
- *          |     |      |           |      |      |
- *          |     |      |           |      |      |
- *          -------      -------------       -------          DIRx signal
- *
- *
- *       ------       ------       ------       ------        INTx signal
- *             |     |      |     |      |     |      |
- *             |     |      |     |      |     |      |
- *             -------      -------      -------       ----
- *
- *             ^     ^      ^     ^      ^     ^      ^
- *             |     |      |     |      |     |      |
- *           Timer   |    Timer   |    Timer   |    Timer
- *             +     |      +     |      +     |      +
- *          Counter  |   Counter  |   Counter  |   Counter
- *             +     |      +     |      +     |      +
- *        DirChgPtr++| DirChgPtr++| DirChgPtr++| DirChgPtr++
- *                 Timer        Timer        Timer
- *                   +            +            +
- *                Counter      Counter      Counter
- *                   +            +            +
- *               DirChgPtr++  DirChgPtr=0  DirChgPtr++
- *
- *
- *
- */
-
-UBYTE     dCalculateSpeed(UBYTE No, SBYTE *pSpeed)
-{
-
-  ULONG Tmp1, Tmp2;
-  ULONG Diff;
-  UBYTE Ptr, Status;
-  SWORD Speed;
-
-  Status  = FALSE;
-
-  Ptr     = TachoSamples[No].ArrayPtr;
-
-  if (Motor[No].DirChgPtr >= 1)
-  {
-    Diff = (((TachoSamples[No].TachoArray[Ptr])-(TachoSamples[No].TachoArray[((Ptr - 1) & (NO_OF_TACHO_SAMPLES - 1))])) & 0x00FFFFFF);
-    if (Diff)
-    {
-      SETAvgTachoCount(No, (ULONG)((CountsPerPulse[No]/Diff) & 0x00FFFFFF));
-    }
-    else
-    {
-      SETAvgTachoCount(No, (ULONG)1);
-    }
-  }
-
-  Speed   = *pSpeed;    // Maintain old speed if not changed
-  Tmp1    = TachoSamples[No].TachoArray[Ptr];
-  Tmp2    = TachoSamples[No].TachoArray[((Ptr - AVG_TACHO_COUNTS[No]) & (NO_OF_TACHO_SAMPLES - 1))];
-
-  if ((Ptr != TachoSamples[No].ArrayPtrOld) && (Motor[No].DirChgPtr >= AVG_TACHO_COUNTS[No]))
-  {
-
-    Status                        = TRUE;
-    TimeOutSpeed0[No]             = Tmp1;
-    TachoSamples[No].ArrayPtrOld  = Ptr;
-
-    Diff = ((Tmp1-Tmp2) & 0x00FFFFFF);
-    if (Diff)
-    {
-      Speed = (SWORD)((ULONG)(AVG_COUNTS[No])/(ULONG)Diff);
-    }
-    else
-    {
-      // Safety check
-      Speed = 1;
-    }
-
-    if (Speed > 100)
-    {
-      Speed = 100;
-    }
-
-    if (BACKWARD == Motor[No].Direction)
-    {
-      Speed = 0 - Speed;
-    }
-  }
-  else
-  {
-    // No new Values check for speed 0
-    if ((CountsPerPulse[No]) < ((FREERunning24bittimer - TimeOutSpeed0[No]) & 0x00FFFFFF))
-    {
-      TimeOutSpeed0[No]   = FREERunning24bittimer;
-      Speed               = 0;
-      Motor[No].DirChgPtr = 0;
-      Status              = TRUE;
-    }
-  }
-
-  *pSpeed = (SBYTE)Speed;
-
-  return(Status);
-}
 
 
 /*! \page PWMModule
@@ -4195,7 +1934,8 @@ module_param (HwId, charp, 0);
 
 static int ModuleInit(void)
 {
-  Hw  =  HWID;
+	long long ll = Motor[1].TimeCnt;
+	Hw  =  HWID;
 
   if (Hw < PLATFORM_START)
   {
@@ -4205,6 +1945,10 @@ static int ModuleInit(void)
   {
     Hw  =  PLATFORM_END;
   }
+printk("long %d\n", sizeof(long));
+printk("long long %d\n", sizeof(long long));
+//ll = ll / (long long)1000;
+printk("div %d\n", (int)ll);
 
 #ifdef DEBUG
   printk("%s init started\n",MODULE_NAME);
