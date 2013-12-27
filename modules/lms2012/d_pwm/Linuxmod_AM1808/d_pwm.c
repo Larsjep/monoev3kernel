@@ -237,6 +237,7 @@ typedef   struct
   SLONG   accCnt;
   SLONG   baseCnt;
   SLONG   baseVelocity;
+  SLONG   baseTachoCnt;
   SLONG   curLimit;
   SLONG   basePower;
   SLONG   err1;
@@ -244,6 +245,7 @@ typedef   struct
   SLONG   stallCnt;
   SLONG   stallLimit;
   SLONG   stallTime;
+  SLONG   limitCheck;
 
   UBYTE   moving;
   UBYTE   checkLimit;
@@ -837,7 +839,9 @@ void      StopAndFloatMotor(UBYTE MotorNo)
 
 static void reset(MOTOR *pm)
 {
-	pm->tachoCnt = pm->curCnt = intToFix(pm->TachoCnt);
+	pm->baseTachoCnt = pm->TachoCnt;
+	pm->baseCnt = pm->tachoCnt = pm->curCnt = 0;
+	pm->curVelocity = 0;
 	pm->baseTime = pm->TimeCnt;
 	pm->moving = FALSE;
 }
@@ -847,26 +851,28 @@ static void startSubMove(MOTOR *pm, SLONG speed, SLONG acceleration, SLONG limit
 	int absAcc = FixAbs(acceleration);
 	//printk("start sm %x\n", limit);
 	pm->checkLimit = FixAbs(limit) != NO_LIMIT;
-	limit = intToFix(limit);
-	pm->baseTime = pm->TimeCnt;;
+	if (pm->checkLimit)
+	{
+	    limit = intToFix(limit - pm->baseTachoCnt);
+	    pm->limitCheck = (FixRound(speed)*FixRound(speed))/FixRound(absAcc)/2 + 360;
+	    if (pm->limitCheck > 32000) pm->limitCheck = 32000;
+	    pm->limitCheck = intToFix(pm->limitCheck);
+	}
+	else
+	{
+		limit = intToFix(limit);
+		pm->limitCheck = 0;
+	}
+	pm->baseTime = pm->TimeCnt;
 	if (!pm->moving && FixAbs(limit - pm->curCnt) < STOP_LIMIT)
 		pm->curTargetVelocity = 0;
 	else
 		pm->curTargetVelocity = (limit - pm->curCnt >= 0 ? speed : -speed);
-	if (absAcc == 0 && pm->checkLimit)
-	{
-		pm->accTime = FixRound(FixDiv(2*(limit-pm->curCnt), pm->curVelocity)*1024);
-		absAcc = FixAbs((pm->curVelocity*1024)/pm->accTime);
-		pm->checkLimit = FALSE;
-		pm->curAcc = pm->curTargetVelocity - pm->curVelocity >= 0 ? absAcc : -absAcc;
-	}
-	else
-	{
-		pm->curAcc = pm->curTargetVelocity - pm->curVelocity >= 0 ? absAcc : -absAcc;
-		pm->accTime = FixRound(FixDiv((pm->curTargetVelocity - pm->curVelocity), pm->curAcc) * 1024);
-	}
+
+	pm->curAcc = pm->curTargetVelocity - pm->curVelocity >= 0 ? absAcc : -absAcc;
+	pm->accTime = FixRound(FixDiv((pm->curTargetVelocity - pm->curVelocity), pm->curAcc) * 1024);
 	pm->curStopAcc = pm->curTargetVelocity >= 0 ? absAcc : -absAcc;
-	pm->accCnt = (SLONG)((pm->curVelocity + pm->curTargetVelocity)*pm->accTime / (2 * 1024));
+	pm->accCnt = (SLONG)pm->curCnt + ((long long)(pm->curVelocity + pm->curTargetVelocity)*pm->accTime / (2 * 1024));
 	pm->baseCnt = pm->curCnt;
 	pm->baseVelocity = pm->curVelocity;
 	pm->curHold = hold;
@@ -874,9 +880,12 @@ static void startSubMove(MOTOR *pm, SLONG speed, SLONG acceleration, SLONG limit
 	//limitAngle = curLimit; // limitAngle is in outer. KPT 5/13/2011 06:42
 	pm->moving = (pm->curTargetVelocity != 0) || (pm->baseVelocity != 0);
 	pm->State = UNLIMITED_REG;
-	//printk("acc time %d\n", pm->accTime);
-	//printk("acc cnt %d\n", FixRound(pm->accCnt));
-	//printk("curpos %d\n", FixRound(pm->curCnt));
+	printk("acc time %d\n", pm->accTime);
+	printk("acc cnt %d\n", FixRound(pm->accCnt));
+	printk("curpos %d\n", FixRound(pm->curCnt));
+	printk("curacc %d\n", pm->curAcc);
+	printk("vel %d\n", FixRound(pm->curTargetVelocity));
+	printk("limitCheck %d", FixRound(pm->limitCheck));
 }
 /**
  * The move has completed either by the motor stopping or by it stalling
@@ -886,7 +895,8 @@ static void endMove(MOTOR *pm, UBYTE stalled)
 {
 	printk("end %d pos %d calc %d actual %d\n", stalled, pm->TachoCnt, FixRound(pm->curCnt), pm->curCnt);
 	pm->moving = FALSE;
-	pm->curCnt = intToFix(FixRound(pm->curCnt));
+	pm->baseTachoCnt += FixRound(pm->curCnt);
+	pm->curCnt = 0;
 	//updateState(0, curHold, stalled);
 	if (stalled)
 	{
@@ -894,7 +904,7 @@ static void endMove(MOTOR *pm, UBYTE stalled)
 		reset(pm);
 		pm->curVelocity = 0;
 		pm->stallCnt = 0;
-		startSubMove(pm, 0, 0, NO_LIMIT, pm->curHold);
+		startSubMove(pm, 0, 100, NO_LIMIT, pm->curHold);
 	}
 	//notifyAll();
 }
@@ -936,7 +946,7 @@ void regulateMotor(MOTOR *pm)
 	int error;
 	long long elapsed = pm->TimeCnt - pm->baseTime;
 	//printk("rm 1");
-	pm->tachoCnt = intToFix(pm->TachoCnt);
+	pm->tachoCnt = intToFix(pm->TachoCnt - pm->baseTachoCnt);
 	if (pm->moving)
 	{
 		if (elapsed < pm->accTime)
@@ -946,7 +956,7 @@ void regulateMotor(MOTOR *pm)
 			pm->curVelocity = (pm->baseVelocity + (SLONG)((long long)pm->curAcc * elapsed / (1024)));
 			pm->curCnt = (pm->baseCnt + (SLONG)((long long)(pm->baseVelocity + pm->curVelocity) * elapsed / (2 * 1024)));
 			error = pm->curCnt - pm->tachoCnt;
-			error = intToFix(FixRound(pm->curCnt) - pm->TachoCnt);
+			//error = intToFix(FixRound(pm->curCnt) - pm->TachoCnt);
 			//printk("e %d tc %d\n", error, pm->TachoCnt);
 			//printk("rm 2");
 		} else
@@ -954,9 +964,9 @@ void regulateMotor(MOTOR *pm)
 			//pm->State = IDLE;
 			// no longer accelerating, calculate new position
 			pm->curVelocity = pm->curTargetVelocity;
-			pm->curCnt = (pm->baseCnt + pm->accCnt + (SLONG)((long long)pm->curVelocity * (elapsed - (long long)pm->accTime) / 1024));
+			pm->curCnt = (pm->accCnt + (SLONG)((long long)pm->curVelocity * (elapsed - (long long)pm->accTime) / 1024));
 			error = pm->curCnt - pm->tachoCnt;
-			error = intToFix(FixRound(pm->curCnt) - pm->TachoCnt);
+			//error = intToFix(FixRound(pm->curCnt) - pm->TachoCnt);
 			// Check to see if the move is complete
 			//printk("rm 3");
 			if (pm->curTargetVelocity == 0 && ((FixAbs(error) < STOP_LIMIT && elapsed > pm->accTime + 100) || elapsed > pm->accTime + 500))
@@ -978,8 +988,8 @@ void regulateMotor(MOTOR *pm)
 		}
 		//printk("rm 5");
 		calcPower(pm, error, pm->moveP, pm->moveI, pm->moveD);
-		// If we have a move limit, check for time to start the deceleration stage
-		if (pm->checkLimit)
+		//if (pm->checkLimit && (FixAbs(pm->curLimit - pm->curCnt) < 360*10*FIX_SCALE))
+		if (pm->limitCheck/FixAbs(pm->curLimit - pm->curCnt) >= 1)
 		{
 			//int acc = FixDiv(FixMult(curVelocity,curVelocity),(2*(curLimit - curCnt)));
 			//if (acc != 0 && FixDiv(curStopAcc, acc) < intToFix(1))
@@ -997,6 +1007,8 @@ void regulateMotor(MOTOR *pm)
 			//if (acc != 0 && FixRound(pm->curStopAcc)/acc <= 1)
 			if (acc != 0 && FixDiv(pm->curStopAcc, acc) <= intToFix(1))
 			{
+				printk("diff %d\n", FixRound(FixAbs(pm->curLimit - pm->curCnt)));
+				printk("limt %d cnt %d\n", FixRound(pm->curLimit), FixRound(pm->curCnt));
 				//System.out.println("stop acc " + FixRound(curStopAcc) + " acc " + FixRound(acc));
 				//System.out.println("stop acc " + FixRound(curStopAcc) + " acc " + acc);
 				//System.out.println("vel " + FixRound(curVelocity) + " limit " + FixRound(curLimit) + " cnt " + FixRound(curCnt));
@@ -1011,6 +1023,7 @@ void regulateMotor(MOTOR *pm)
 	{
 		// not moving, hold position
 		error = pm->curCnt - pm->tachoCnt;
+		//printk("hold err %d\n", error);
 		//printk("rm 9");
 		calcPower(pm, error, pm->holdP, pm->holdI, pm->holdD);
 		//printk("rm 10");
@@ -1241,6 +1254,7 @@ printk("holdD %d moveD %d", FixRound(Motor[Tmp].holdD), FixRound(Motor[Tmp].move
           pMotor[Tmp].TachoCounts  =  0;
           Motor[Tmp].TimeCnt       =  0;
           Motor[Tmp].Mutex         =  FALSE;
+          reset(&Motor[Tmp]);
 
     }
     break;
@@ -1252,6 +1266,7 @@ printk("holdD %d moveD %d", FixRound(Motor[Tmp].holdD), FixRound(Motor[Tmp].move
           pMotor[Tmp].TachoSensor  =  0;
           Motor[Tmp].TachoSensor   =  0;
           Motor[Tmp].Mutex         =  FALSE;
+          reset(&Motor[Tmp]);
     }
     break;
 
