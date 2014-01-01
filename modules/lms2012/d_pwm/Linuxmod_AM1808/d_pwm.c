@@ -52,15 +52,6 @@ int       HwInvBits  =  0;
 #define   COUNTS_PER_PULSE_LM           12800L
 #define   COUNTS_PER_PULSE_MM           8100L
 
-enum
-{
-  SAMPLES_BELOW_SPEED_25  =  0,
-  SAMPLES_SPEED_25_50     =  1,
-  SAMPLES_SPEED_50_75     =  2,
-  SAMPLES_ABOVE_SPEED_75  =  3,
-  NO_OF_SAMPLE_STEPS      =  4
-};
-
 
 /*
  * Defines related to hardware PWM output
@@ -205,21 +196,35 @@ enum
 
 enum
 {
-  UNUSED_SYNC_MOTOR = 0xFF
+    ST_IDLE,
+    ST_STALL,
+    ST_HOLD,
+    ST_START,
+    ST_ACCEL,
+    ST_MOVE,
+    ST_DECEL
 };
 
 
+typedef struct
+{
+    SLONG baseCnt;
+    SLONG curCnt;
+    SLONG curVelocity;
+    SLONG tachoCnt;
+    SLONG state;
+    SLONG time;
+} MOTORSHARED;
+
 typedef   struct
 {
+  MOTORSHARED *shared;
   SLONG   IrqTacho;
   SLONG   TachoCnt;
-  SLONG   TachoSensor;
   SLONG   TimeCnt;
   SLONG   TimeInc;
   SLONG   OldTachoCnt;
   SLONG   Power;
-  SLONG   TargetPower;
-  SLONG   Dir;
   SLONG   moveP;
   SLONG   moveI;
   SLONG   moveD;
@@ -229,43 +234,36 @@ typedef   struct
   SLONG   tachoCnt;
   SLONG   baseTime;
   SLONG   curCnt;
-  SLONG   curTargetVelocity;
-  SLONG   curAcc;
   SLONG   curVelocity;
-  SLONG   curStopAcc;
-  SLONG   accTime;
-  SLONG   accCnt;
   SLONG   baseCnt;
-  SLONG   baseVelocity;
-  SLONG   baseTachoCnt;
-  SLONG   curLimit;
   SLONG   basePower;
   SLONG   err1;
   SLONG   err2;
   SLONG   stallCnt;
   SLONG   stallLimit;
   SLONG   stallTime;
-  SLONG   limitCheck;
+  SLONG   deadBand;
+  SLONG   offset;
 
+  SLONG   mT1;
+  SLONG   mT2;
+  SLONG   mT3;
+  SLONG   mC2;
+  SLONG   mC3;
+  SLONG   mV1;
+  SLONG   mV2;
+  SLONG   mA1;
+  SLONG   mA3;
+
+  UBYTE   no;
   UBYTE   moving;
-  UBYTE   checkLimit;
   UBYTE   curHold;
-  UBYTE   Direction;
   UBYTE   Type;
   UBYTE   State;
-  UBYTE   TargetState;
-  UBYTE   Owner;
   UBYTE   Mutex;
 }MOTOR;
 
 
-
-typedef   struct
-{
-  ULONG   TachoArray[NO_OF_TACHO_SAMPLES];
-  UBYTE   ArrayPtr;
-  UBYTE   ArrayPtrOld;
-}TACHOSAMPLES;
 
 
 static    int  ModuleInit(void);
@@ -504,8 +502,8 @@ static    void    (*SetDuty[NO_OF_OUTPUT_PORTS])(ULONG)  = {SetDutyMA,SetDutyMB,
 static    UBYTE           ReadyStatus = 0;
 static    UBYTE           TestStatus  = 0;
 
-static    MOTORDATA       MotorData[NO_OF_OUTPUT_PORTS];
-static    MOTORDATA       *pMotor = MotorData;
+static    MOTORSHARED     MotorData[NO_OF_OUTPUT_PORTS];
+static    MOTORSHARED     *pMotor = MotorData;
 
 
 
@@ -651,39 +649,45 @@ static    ktime_t         Device1Time;
 #define   READIntD                      OutputRead(3,INT)
 
 #define FIX_SCALE 256
-#define FIX_SHIFT 8
 
 static SLONG intToFix(SLONG i)
 {
-    return i << FIX_SHIFT;
+    return i*FIX_SCALE;
 }
 
 
 static SLONG FixMult(SLONG a, SLONG b)
 {
-    return (a*b) >> FIX_SHIFT;
+    return (a*b)/FIX_SCALE;
 }
 
 static SLONG FixDiv(SLONG a, SLONG b)
 {
-    return (a << FIX_SHIFT)/b;
+    return (a*FIX_SCALE)/b;
 }
 
 static SLONG FixRound(SLONG a)
 {
-    return (a > 0 ?(a+FIX_SCALE/2) >> FIX_SHIFT : (a-FIX_SHIFT/2) >> FIX_SHIFT);
+    return (a >= 0 ?(a+(FIX_SCALE/2))/FIX_SCALE : (a-(FIX_SCALE/2))/FIX_SCALE);
 }
 
 static SLONG FixAbs(SLONG i)
 {
 	return (i > 0 ? i : -i);
 }
-#define INT_TO_FIX(i) (i << FIX_SHIFT)
+#define INT_TO_FIX(i) (i*FIX_SCALE)
 static SLONG STOP_LIMIT = INT_TO_FIX(2);
+
 static SLONG F_SMOOTH1 = INT_TO_FIX(375)/1000;
 static SLONG F_SMOOTH2 = INT_TO_FIX(625)/1000;
 static SLONG S_SMOOTH1 = INT_TO_FIX(750)/1000;
 static SLONG S_SMOOTH2 = INT_TO_FIX(250)/1000;
+/*
+static SLONG F_SMOOTH1 = INT_TO_FIX(300)/1000;
+static SLONG F_SMOOTH2 = INT_TO_FIX(700)/1000;
+static SLONG S_SMOOTH1 = INT_TO_FIX(750)/1000;
+static SLONG S_SMOOTH2 = INT_TO_FIX(250)/1000;
+*/
 static SLONG MAX_POWER = INT_TO_FIX(100);
 #define NO_LIMIT 0x7fffffff
 
@@ -754,40 +758,18 @@ void      SetPower(UBYTE Port, SLONG Power)
     Power             = -MAX_PWM_CNT;
     Motor[Port].Power = Power;
   }
-
-  if (TYPE_MINITACHO == Motor[Port].Type)
+  if (0 != Power)
   {
-    // Medium Motor
-    if (0 != Power)
+    if (0 < Power)
     {
-      if (0 < Power)
-      {
-        SetDirFwd(Port);
-      }
-      else
-      {
-        SetDirRwd(Port);
-        Power = 0 - Power;
-      }
-      Power = ((Power * 8000)/10000) + 2000;
+	  SetDirFwd(Port);
     }
-  }
-  else
-  {
-    // Large motor
-    if (0 != Power)
+    else
     {
-      if (0 < Power)
-      {
-        SetDirFwd(Port);
-      }
-      else
-      {
-        SetDirRwd(Port);
-        Power = 0 - Power;
-      }
-      Power = ((Power * 9500)/10000) + 500;
+	  SetDirRwd(Port);
+	  Power = 0 - Power;
     }
+    Power = ((Power * (10000 - Motor[Port].offset))/10000) + Motor[Port].offset;
   }
   SetDuty[Port](Power);
 }
@@ -817,7 +799,6 @@ void      StopAndBrakeMotor(UBYTE MotorNo)
   ReadyStatus             &=  ~(0x01 << MotorNo);
   TestStatus              &=  ~(0x01 << MotorNo);
   Motor[MotorNo].Power     =  0;
-  Motor[MotorNo].TachoCnt  =  0;
   Motor[MotorNo].State     =  BRAKED;
   Motor[MotorNo].moving = FALSE;
   SetPower(MotorNo, Motor[MotorNo].Power);
@@ -830,7 +811,6 @@ void      StopAndFloatMotor(UBYTE MotorNo)
   ReadyStatus             &=  ~(0x01 << MotorNo);
   TestStatus              &=  ~(0x01 << MotorNo);
   Motor[MotorNo].Power     =  0;
-  Motor[MotorNo].TachoCnt  =  0;
   Motor[MotorNo].State     =  IDLE;
   Motor[MotorNo].moving = FALSE;
   SetPower(MotorNo, Motor[MotorNo].Power);
@@ -839,74 +819,38 @@ void      StopAndFloatMotor(UBYTE MotorNo)
 
 static void reset(MOTOR *pm)
 {
-	pm->baseTachoCnt = pm->TachoCnt;
-	pm->baseCnt = pm->tachoCnt = pm->curCnt = 0;
+	pm->baseCnt = pm->TachoCnt;
+	pm->shared->baseCnt = pm->baseCnt;
+	pm->tachoCnt = pm->curCnt = 0;
 	pm->curVelocity = 0;
 	pm->baseTime = pm->TimeCnt;
 	pm->moving = FALSE;
+	printk("Reset\n");
 }
 
-static void startSubMove(MOTOR *pm, SLONG speed, SLONG acceleration, SLONG limit, UBYTE hold)
-{
-	int absAcc = FixAbs(acceleration);
-	//printk("start sm %x\n", limit);
-	pm->checkLimit = FixAbs(limit) != NO_LIMIT;
-	if (pm->checkLimit)
-	{
-	    limit = intToFix(limit - pm->baseTachoCnt);
-	    pm->limitCheck = (FixRound(speed)*FixRound(speed))/FixRound(absAcc)/2 + 360;
-	    if (pm->limitCheck > 32000) pm->limitCheck = 32000;
-	    pm->limitCheck = intToFix(pm->limitCheck);
-	}
-	else
-	{
-		limit = intToFix(limit);
-		pm->limitCheck = 0;
-	}
-	pm->baseTime = pm->TimeCnt;
-	if (!pm->moving && FixAbs(limit - pm->curCnt) < STOP_LIMIT)
-		pm->curTargetVelocity = 0;
-	else
-		pm->curTargetVelocity = (limit - pm->curCnt >= 0 ? speed : -speed);
 
-	pm->curAcc = pm->curTargetVelocity - pm->curVelocity >= 0 ? absAcc : -absAcc;
-	pm->accTime = FixRound(FixDiv((pm->curTargetVelocity - pm->curVelocity), pm->curAcc) * 1024);
-	pm->curStopAcc = pm->curTargetVelocity >= 0 ? absAcc : -absAcc;
-	pm->accCnt = (SLONG)pm->curCnt + ((long long)(pm->curVelocity + pm->curTargetVelocity)*pm->accTime / (2 * 1024));
-	pm->baseCnt = pm->curCnt;
-	pm->baseVelocity = pm->curVelocity;
-	pm->curHold = hold;
-	pm->curLimit = limit;
-	//limitAngle = curLimit; // limitAngle is in outer. KPT 5/13/2011 06:42
-	pm->moving = (pm->curTargetVelocity != 0) || (pm->baseVelocity != 0);
-	pm->State = UNLIMITED_REG;
-	printk("acc time %d\n", pm->accTime);
-	printk("acc cnt %d\n", FixRound(pm->accCnt));
-	printk("curpos %d\n", FixRound(pm->curCnt));
-	printk("curacc %d\n", pm->curAcc);
-	printk("vel %d\n", FixRound(pm->curTargetVelocity));
-	printk("limitCheck %d", FixRound(pm->limitCheck));
-}
 /**
  * The move has completed either by the motor stopping or by it stalling
  * @param stalled
  */
 static void endMove(MOTOR *pm, UBYTE stalled)
 {
-	printk("end %d pos %d calc %d actual %d\n", stalled, pm->TachoCnt, FixRound(pm->curCnt), pm->curCnt);
+	//printk("end %d pos %d base %d calc %d actual %d\n", stalled, pm->TachoCnt, pm->baseCnt, FixRound(pm->curCnt), pm->curCnt);
 	pm->moving = FALSE;
-	pm->baseTachoCnt += FixRound(pm->curCnt);
+	pm->baseCnt += FixRound(pm->curCnt);
+	pm->shared->baseCnt = pm->baseCnt;
+	printk("end %d pos %d base %d calc %d actual %d\n", stalled, pm->TachoCnt, pm->baseCnt, FixRound(pm->curCnt), pm->curCnt);
 	pm->curCnt = 0;
-	//updateState(0, curHold, stalled);
 	if (stalled)
 	{
 		// stalled try and maintain current position
 		reset(pm);
 		pm->curVelocity = 0;
 		pm->stallCnt = 0;
-		startSubMove(pm, 0, 100, NO_LIMIT, pm->curHold);
+		pm->shared->state = ST_STALL;
 	}
-	//notifyAll();
+	else
+	    pm->shared->state = (pm->curHold ? ST_HOLD : ST_IDLE);
 }
 
 /**
@@ -915,7 +859,7 @@ static void endMove(MOTOR *pm, UBYTE stalled)
  * control
  * @param error
  */
-static void calcPower(MOTOR *pm, SLONG error, SLONG P, SLONG I, SLONG D)
+static void calcPower(MOTOR *pm, SLONG error, SLONG P, SLONG I, SLONG D, SLONG offset)
 {
 	// use smoothing to reduce the noise in frequent tacho count readings
 	// New values
@@ -924,108 +868,135 @@ static void calcPower(MOTOR *pm, SLONG error, SLONG P, SLONG I, SLONG D)
 	// Original values
 	//err1 = 0.5f * err1 + 0.5f * error;  // fast smoothing
 	//err2 = 0.8f * err2 + 0.2f * error; // slow smoothing
-	SLONG newPower = pm->basePower + FixMult(P, pm->err1) + FixMult(D, (pm->err1 - pm->err2));
+    SLONG newPower = pm->basePower + FixMult(P, pm->err1) + FixMult(D, (pm->err1 - pm->err2));
 	pm->basePower = pm->basePower + FixMult(I, (newPower - pm->basePower));
+	/*
+    if (pm->err1 > 0)
+    	pm->basePower += I;
+    else if (pm->err1 < 0)
+    	pm->basePower -= I;
+    else
+    	pm->basePower /= 2;
+    */
 	if (pm->basePower > MAX_POWER)
 		pm->basePower = MAX_POWER;
 	else if (pm->basePower < -MAX_POWER)
 		pm->basePower = -MAX_POWER;
 	//newPower = (float) (power*0.75 + newPower*0.25);
 	SLONG power = (newPower > MAX_POWER ? MAX_POWER : newPower < -MAX_POWER ? -MAX_POWER : newPower);
-	pm->Power = FixRound(power*(SLONG)SPEED_PWMCNT_REL);
-	//printk("power %d\n", pm->Power);
+	power = FixRound(power*(SLONG)SPEED_PWMCNT_REL);
+	pm->Power = power;
+    //pm->Power = ((power * (10000 - FixAbs(offset)))/10000) + offset;
+	//printk("e %d e1 %d p %d\n", error, pm->err1, pm->Power);
 	//mode = (power == 0 ? TachoMotorPort.STOP : TachoMotorPort.FORWARD);
 	//mode = TachoMotorPort.FORWARD;
 }
 
+
+void startMove(MOTOR *pm, int t1, int t2, int t3, int c2, int c3, int v1, int v2, int a1, int a3, int startTime, UBYTE hold)
+{
+	//printk("Start move\n");
+    pm->mT1 = t1;
+    pm->mT2 = t2;
+    pm->mT3 = t3;
+    pm->mC2 = c2;
+    pm->mC3 = c3;
+    pm->mV1 = v1;
+    pm->mV2 = v2;
+    pm->mA1 = a1;
+    pm->mA3 = a3;
+    pm->curHold = hold;
+	pm->baseTime = pm->TimeCnt;
+	if (startTime != 0)
+	    pm->baseTime -= (pm->TimeCnt - startTime);
+    pm->moving = (pm->mV1 != 0 || pm->mV2 != 0);
+    if (pm->moving)
+        pm->shared->state = ST_START;
+    else
+        pm->shared->state = (hold ? ST_HOLD : ST_IDLE);
+	//printk("Start move %d t1 %d t2 %d t3 %d pos %d\n", pm->moving, pm->mT1, pm->mT2, pm->mT3, FixRound(pm->curCnt));
+	//printk("C2 %d C3 %d V1 %d V2 %d hold %d\n", FixRound(pm->mC2), FixRound(pm->mC3), FixRound(pm->mV1), FixRound(pm->mV2), pm->curHold);
+	pm->State = UNLIMITED_REG;
+}
 /**
  * Monitors time and tachoCount to regulate velocity and stop motor rotation at limit angle
  */
-void regulateMotor(MOTOR *pm)
+void regulateMotor2(MOTOR *pm)
 {
 	int error;
 	long long elapsed = pm->TimeCnt - pm->baseTime;
 	//printk("rm 1");
-	pm->tachoCnt = intToFix(pm->TachoCnt - pm->baseTachoCnt);
+	pm->tachoCnt = intToFix(pm->TachoCnt - pm->baseCnt);
 	if (pm->moving)
 	{
-		if (elapsed < pm->accTime)
+		if (elapsed <= pm->mT1)
 		{
+			//printk("T1\n");
 			//printk("elap %d acc %d\n", (int) elapsed, pm->accTime);
 			// We are still accelerating, calculate new position
-			pm->curVelocity = (pm->baseVelocity + (SLONG)((long long)pm->curAcc * elapsed / (1024)));
-			pm->curCnt = (pm->baseCnt + (SLONG)((long long)(pm->baseVelocity + pm->curVelocity) * elapsed / (2 * 1024)));
+			pm->curVelocity = (pm->mV1 + (SLONG)((long long)pm->mA1 * elapsed / (1024)));
+			pm->curCnt = ((SLONG)((long long)(pm->mV1 + pm->curVelocity) * elapsed / (2 * 1024)));
 			error = pm->curCnt - pm->tachoCnt;
+			pm->shared->state = ST_ACCEL;
 			//error = intToFix(FixRound(pm->curCnt) - pm->TachoCnt);
 			//printk("e %d tc %d\n", error, pm->TachoCnt);
 			//printk("rm 2");
-		} else
+		}
+		else if (elapsed <= pm->mT2)
 		{
 			//pm->State = IDLE;
 			// no longer accelerating, calculate new position
-			pm->curVelocity = pm->curTargetVelocity;
-			pm->curCnt = (pm->accCnt + (SLONG)((long long)pm->curVelocity * (elapsed - (long long)pm->accTime) / 1024));
+			pm->curVelocity = pm->mV2;
+			pm->curCnt = (pm->mC2 + (SLONG)((long long)pm->curVelocity * (elapsed - (long long)pm->mT1) / 1024));
 			error = pm->curCnt - pm->tachoCnt;
+            pm->shared->state = ST_MOVE;
 			//error = intToFix(FixRound(pm->curCnt) - pm->TachoCnt);
 			// Check to see if the move is complete
 			//printk("rm 3");
-			if (pm->curTargetVelocity == 0 && ((FixAbs(error) < STOP_LIMIT && elapsed > pm->accTime + 100) || elapsed > pm->accTime + 500))
+			//printk("rm 4");
+		}
+		else if (elapsed <= pm->mT3)
+		{
+			//printk("CV %d CC %d\n", FixRound(pm->curVelocity), FixRound(pm->curCnt));
+			pm->curVelocity = pm->mV2 + (SLONG)((long long)pm->mA3 * (elapsed-pm->mT2) / 1024);
+			pm->curCnt = pm->mC3 + ((SLONG)((long long)(pm->mV2 + pm->curVelocity) * (elapsed - pm->mT2) / (2 * 1024)));
+			error = pm->curCnt - pm->tachoCnt;
+            pm->shared->state = ST_DECEL;
+		}
+		else
+		{
+			error = pm->curCnt - pm->tachoCnt;
+			if (((FixAbs(error) < STOP_LIMIT && elapsed > pm->mT3 + 100) || elapsed > pm->mT3 + 500))
 			{
 				endMove(pm, FALSE);
 			}
-			//printk("rm 4");
+
 		}
 		// check for stall
 		if (FixAbs(error) > pm->stallLimit)
 		{
 			//printk("elapsed %d\n", (int)elapsed);
 			pm->baseTime += pm->TimeInc;
-			if (pm->stallCnt++ > pm->stallTime) endMove(pm, TRUE);
+			if (pm->stallCnt++ > pm->stallTime)
+				endMove(pm, TRUE);
 		}
 		else
 		{
 			pm->stallCnt /= 2;
 		}
 		//printk("rm 5");
-		calcPower(pm, error, pm->moveP, pm->moveI, pm->moveD);
-		//if (pm->checkLimit && (FixAbs(pm->curLimit - pm->curCnt) < 360*10*FIX_SCALE))
-		if (pm->limitCheck/FixAbs(pm->curLimit - pm->curCnt) >= 1)
-		{
-			//int acc = FixDiv(FixMult(curVelocity,curVelocity),(2*(curLimit - curCnt)));
-			//if (acc != 0 && FixDiv(curStopAcc, acc) < intToFix(1))
-			SLONG acc;
-			SLONG intVel = FixRound(pm->curVelocity);
-			SLONG posErr = FixRound(pm->curLimit - pm->curCnt);
-			acc = FixDiv(pm->curVelocity, FixDiv(2*(pm->curLimit - pm->curCnt), pm->curVelocity));
-			/*
-			//printk("cur lim %d cnt %d vel %d\n", intVel, pm->curLimit, pm->curCnt);
-			if (posErr == 0)
-				acc = pm->curStopAcc + 1;
-			else
-			    acc = intToFix(intVel*intVel)/(2*posErr);*/
-			//printk("rm 6");
-			//if (acc != 0 && FixRound(pm->curStopAcc)/acc <= 1)
-			if (acc != 0 && FixDiv(pm->curStopAcc, acc) <= intToFix(1))
-			{
-				printk("diff %d\n", FixRound(FixAbs(pm->curLimit - pm->curCnt)));
-				printk("limt %d cnt %d\n", FixRound(pm->curLimit), FixRound(pm->curCnt));
-				//System.out.println("stop acc " + FixRound(curStopAcc) + " acc " + FixRound(acc));
-				//System.out.println("stop acc " + FixRound(curStopAcc) + " acc " + acc);
-				//System.out.println("vel " + FixRound(curVelocity) + " limit " + FixRound(curLimit) + " cnt " + FixRound(curCnt));
-				//printk("rm 7");
-				//startSubMove(pm, 0, intToFix(acc), NO_LIMIT, pm->curHold);
-				startSubMove(pm, 0, acc, NO_LIMIT, pm->curHold);
-				//startSubMove(pm, 0, 0, FixRound(pm->curLimit), pm->curHold);
-			}
-			//printk("rm 8");
-		}
-	} else if (pm->curHold)
+		calcPower(pm, error, pm->moveP, pm->moveI, pm->moveD, (pm->mV2 > 0 ? pm->offset : -pm->offset));
+
+	}
+	else if (pm->curHold)
 	{
 		// not moving, hold position
 		error = pm->curCnt - pm->tachoCnt;
+		if (FixAbs(error) <= pm->deadBand)
+			error = 0;
 		//printk("hold err %d\n", error);
 		//printk("rm 9");
-		calcPower(pm, error, pm->holdP, pm->holdI, pm->holdD);
+		calcPower(pm, error, pm->holdP, pm->holdI, pm->holdD, (error >= 0 ? pm->offset : -pm->offset));
 		//printk("rm 10");
 	}
 	else
@@ -1033,9 +1004,7 @@ void regulateMotor(MOTOR *pm)
 		// Allow the motor to move freely
 		pm->curCnt = pm->tachoCnt;
 		pm->Power = 0;
-		//mode = TachoMotorPort.FLOAT;
-		//active = false;
-		//cont.removeMotor(this);
+		StopAndFloatMotor(pm->no);
 	}
 }
 
@@ -1067,27 +1036,25 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
     Tmp      = (TmpTacho - Motor[No].OldTachoCnt);
 
     Motor[No].TachoCnt      +=  Tmp;
-    Motor[No].TachoSensor   +=  Tmp;
     Motor[No].OldTachoCnt    =  TmpTacho;
+    Motor[No].TimeCnt       +=  Motor[No].TimeInc;  // Add or sub so that TimerCnt is 1 mS resolution
 
     /* Update shared memory */
-    pMotor[No].TachoCounts   =  Motor[No].TachoCnt;
-    pMotor[No].Speed         =  Motor[No].moving;
-    pMotor[No].TachoSensor   =  Motor[No].TachoSensor;
+    pMotor[No].curCnt   =  Motor[No].curCnt;
+    pMotor[No].curVelocity   = Motor[No].curVelocity;
+    pMotor[No].tachoCnt   =  Motor[No].TachoCnt;
+    pMotor[No].time = Motor[No].TimeCnt;
 
-    Motor[No].TimeCnt       +=  Motor[No].TimeInc;  // Add or sub so that TimerCnt is 1 mS resolution
 
     if (FALSE == Motor[No].Mutex)
     {
-
-      //Test = dCalculateSpeed(No, &(Motor[No].Speed));
       switch(Motor[No].State)
       {
         case UNLIMITED_UNREG:
         break;
 
         case UNLIMITED_REG:
-        	regulateMotor(&Motor[No]);
+        	regulateMotor2(&Motor[No]);
             SetPower(No,Motor[No].Power);
         	break;
         case LIMITED_REG_STEPUP:
@@ -1168,7 +1135,7 @@ static SLONG getVal(SBYTE *buf, SLONG offset)
 static ssize_t Device1Write(struct file *File,const char *Buffer,size_t Count,loff_t *Data)
 {
 
-  SBYTE   Buf[32];
+  SBYTE   Buf[64];
   int     Lng = 0;
 
   copy_from_user(Buf,Buffer,Count);
@@ -1190,7 +1157,6 @@ static ssize_t Device1Write(struct file *File,const char *Buffer,size_t Count,lo
         Motor[Tmp].Power       = 0;
 
           Motor[Tmp].State        = IDLE;
-          Motor[Tmp].TargetState  = UNLIMITED_UNREG;
           Motor[Tmp].moving = FALSE;
           SetCoast(Tmp);
 
@@ -1205,7 +1171,7 @@ static ssize_t Device1Write(struct file *File,const char *Buffer,size_t Count,lo
     case opOUTPUT_SET_TYPE:
     {
       UBYTE Tmp = Buf[1];
-        if (Buf[2] != Motor[Tmp].Type)
+        //if (Buf[2] != Motor[Tmp].Type)
         {
           Motor[Tmp].Mutex  =  TRUE;
           if ((TYPE_TACHO == Buf[2]) || (TYPE_MINITACHO == Buf[2]))
@@ -1216,29 +1182,38 @@ static ssize_t Device1Write(struct file *File,const char *Buffer,size_t Count,lo
           else
           {
             // No motor is connected
-            Motor[Tmp].State  =  IDLE;
             SetCoast(Tmp);
           }
           Motor[Tmp].Type          =  Buf[2];
 
           // All counts are reset when motor type changes
-          Motor[Tmp].TachoCnt      =  0;
-          pMotor[Tmp].TachoCounts  =  0;
+          Motor[Tmp].TachoCnt = 0;
+          Motor[Tmp].curCnt      =  0;
+          Motor[Tmp].curVelocity = 0;
+          pMotor[Tmp].tachoCnt  =  0;
+          pMotor[Tmp].curVelocity = 0;
+          pMotor[Tmp].curCnt = 0;
+          pMotor[Tmp].state = ST_IDLE;
           Motor[Tmp].TimeCnt       =  0;
-          pMotor[Tmp].TachoSensor  =  0;
-          Motor[Tmp].TachoSensor   =  0;
           Motor[Tmp].moveP = getVal(Buf, 3);
           Motor[Tmp].moveI = getVal(Buf, 7);
           Motor[Tmp].moveD = getVal(Buf, 11);
           Motor[Tmp].holdP = getVal(Buf, 15);
           Motor[Tmp].holdI = getVal(Buf, 19);
           Motor[Tmp].holdD = getVal(Buf, 23);
+          Motor[Tmp].offset = getVal(Buf, 27);
+          Motor[Tmp].deadBand = getVal(Buf, 31);
           Motor[Tmp].stallCnt = 0;
           Motor[Tmp].stallLimit = intToFix(50);
           Motor[Tmp].stallTime = 1000;
           Motor[Tmp].TimeInc = SOFT_TIMER_MS;
-printk("holdD %d moveD %d", FixRound(Motor[Tmp].holdD), FixRound(Motor[Tmp].moveD));
+          Motor[Tmp].basePower = 0;
+          Motor[Tmp].Power = 0;
+          Motor[Tmp].err1 = 0;
+          Motor[Tmp].err2 = 0;
+printk("holdD %d moveD %d type %d", FixRound(Motor[Tmp].holdD), FixRound(Motor[Tmp].moveD), Buf[2]);
           reset(&Motor[Tmp]);
+          Motor[Tmp].State  =  IDLE;
           Motor[Tmp].Mutex         =  FALSE;
         }
     }
@@ -1251,7 +1226,7 @@ printk("holdD %d moveD %d", FixRound(Motor[Tmp].holdD), FixRound(Motor[Tmp].move
 
           Motor[Tmp].Mutex         =  TRUE;
           Motor[Tmp].TachoCnt      =  0;
-          pMotor[Tmp].TachoCounts  =  0;
+          pMotor[Tmp].tachoCnt     =  0;
           Motor[Tmp].TimeCnt       =  0;
           Motor[Tmp].Mutex         =  FALSE;
           reset(&Motor[Tmp]);
@@ -1263,8 +1238,7 @@ printk("holdD %d moveD %d", FixRound(Motor[Tmp].holdD), FixRound(Motor[Tmp].move
     {
       UBYTE Tmp = Buf[1];
           Motor[Tmp].Mutex         =  TRUE;
-          pMotor[Tmp].TachoSensor  =  0;
-          Motor[Tmp].TachoSensor   =  0;
+          pMotor[Tmp].tachoCnt     =  0;
           Motor[Tmp].Mutex         =  FALSE;
           reset(&Motor[Tmp]);
     }
@@ -1284,7 +1258,7 @@ printk("holdD %d moveD %d", FixRound(Motor[Tmp].holdD), FixRound(Motor[Tmp].move
           {
             StopAndFloatMotor(Tmp);
           }
-
+          Motor[Tmp].State =  BRAKE;
           Motor[Tmp].Mutex = FALSE;
     }
     break;
@@ -1292,22 +1266,19 @@ printk("holdD %d moveD %d", FixRound(Motor[Tmp].holdD), FixRound(Motor[Tmp].move
     case opOUTPUT_POWER:
     {
       UBYTE Tmp = Buf[1];
+      SLONG power;
 
 
       CheckSpeedPowerLimits(&(Buf[2]));
 
           Motor[Tmp].Mutex       = TRUE;
-          Motor[Tmp].TargetPower = (SLONG)(Buf[2]) * (SLONG)SPEED_PWMCNT_REL;
+          power = (SLONG)(Buf[2]) * (SLONG)SPEED_PWMCNT_REL;
 
-          Motor[Tmp].TargetState = UNLIMITED_UNREG;
-
-          if (Motor[Tmp].TargetPower != Motor[Tmp].Power)
+          if (power != Motor[Tmp].Power)
           {
-            Motor[Tmp].Power  = Motor[Tmp].TargetPower;
-            SetPower(Tmp,Motor[Tmp].Power);
+            Motor[Tmp].Power  = power;
+            SetPower(Tmp, power);
           }
-          Motor[Tmp].TachoCnt  =  0;
-          Motor[Tmp].TimeCnt   =  0;
           Motor[Tmp].Mutex = FALSE;
     }
     break;
@@ -1321,8 +1292,9 @@ printk("holdD %d moveD %d", FixRound(Motor[Tmp].holdD), FixRound(Motor[Tmp].move
 
 
           Motor[Tmp].Mutex         =  TRUE;
-          startSubMove(&Motor[Tmp], getVal(Buf, 2), getVal(Buf, 6), getVal(Buf, 10), Buf[15]);
-          pMotor[Tmp].Speed         =  Motor[Tmp].moving;
+          //startSubMove(&Motor[Tmp], getVal(Buf, 2), getVal(Buf, 6), getVal(Buf, 10), Buf[15]);
+          startMove(&Motor[Tmp], getVal(Buf, 2), getVal(Buf, 6), getVal(Buf, 10), getVal(Buf, 14), getVal(Buf, 18),
+                    getVal(Buf, 22), getVal(Buf, 26), getVal(Buf, 30), getVal(Buf, 34), getVal(Buf, 38), Buf[42]);
           Motor[Tmp].Mutex         =  FALSE;
 
     }
@@ -1475,11 +1447,10 @@ static int Device1Init(void)
     {
       memset(&Motor[Tmp], 0, sizeof(MOTOR));
 
-      Motor[Tmp].Direction    =  FORWARD;
       Motor[Tmp].Type         =  TYPE_NONE;
       Motor[Tmp].State        =  IDLE;
-      Motor[Tmp].TargetState  =  UNLIMITED_UNREG; //default startup state
       Motor[Tmp].Mutex        =  FALSE;
+      Motor[Tmp].no           =  Tmp;
 
       SETMotorType(Tmp, TYPE_NONE);                  //  Motor types can be: TYPE_TACHO, TYPE_NONE, TYPE_MINITACHO
     }
@@ -1650,12 +1621,10 @@ static    irqreturn_t IntA (int irq, void * dev)
       if(DirAState)
       {
         (Motor[0].IrqTacho)++;
-        Motor[0].Direction = FORWARD;
       }
       else
       {
         (Motor[0].IrqTacho)--;
-        Motor[0].Direction = BACKWARD;
       }
     }
     else
@@ -1663,12 +1632,10 @@ static    irqreturn_t IntA (int irq, void * dev)
       if(DirAState)
       {
         (Motor[0].IrqTacho)--;
-        Motor[0].Direction = BACKWARD;
       }
       else
       {
         (Motor[0].IrqTacho)++;
-        Motor[0].Direction = FORWARD;
       }
     }
 
@@ -1692,12 +1659,10 @@ static    irqreturn_t IntB (int irq, void * dev)
       if(DirBState)
       {
         (Motor[1].IrqTacho)++;
-        Motor[1].Direction = FORWARD;
       }
       else
       {
         (Motor[1].IrqTacho)--;
-        Motor[1].Direction = BACKWARD;
       }
     }
     else
@@ -1705,12 +1670,10 @@ static    irqreturn_t IntB (int irq, void * dev)
       if(DirBState)
       {
         (Motor[1].IrqTacho)--;
-        Motor[1].Direction = BACKWARD;
       }
       else
       {
         (Motor[1].IrqTacho)++;
-        Motor[1].Direction = FORWARD;
       }
     }
 
@@ -1734,12 +1697,10 @@ static    irqreturn_t IntC (int irq, void * dev)
       if(DirCState)
       {
         (Motor[2].IrqTacho)++;
-        Motor[2].Direction = FORWARD;
       }
       else
       {
         (Motor[2].IrqTacho)--;
-        Motor[2].Direction = BACKWARD;
       }
     }
     else
@@ -1747,12 +1708,10 @@ static    irqreturn_t IntC (int irq, void * dev)
       if(DirCState)
       {
         (Motor[2].IrqTacho)--;
-        Motor[2].Direction = BACKWARD;
       }
       else
       {
         (Motor[2].IrqTacho)++;
-        Motor[2].Direction = FORWARD;
       }
     }
 
@@ -1776,12 +1735,10 @@ static    irqreturn_t IntD (int irq, void * dev)
       if(DirDState)
       {
         (Motor[3].IrqTacho)++;
-        Motor[3].Direction = FORWARD;
       }
       else
       {
         (Motor[3].IrqTacho)--;
-        Motor[3].Direction = BACKWARD;
       }
     }
     else
@@ -1789,12 +1746,10 @@ static    irqreturn_t IntD (int irq, void * dev)
       if(DirDState)
       {
         (Motor[3].IrqTacho)--;
-        Motor[3].Direction = BACKWARD;
       }
       else
       {
         (Motor[3].IrqTacho)++;
-        Motor[3].Direction = FORWARD;
       }
     }
 
@@ -1886,7 +1841,7 @@ static int Device2Init(void)
 {
   int       Result = -1;
   int       i;
-  MOTORDATA *pTmp;
+  MOTORSHARED *pTmp;
 
   Result  =  misc_register(&Device2);
   if (Result)
@@ -1898,13 +1853,15 @@ static int Device2Init(void)
 
     if ((kmalloc_ptr = kmalloc((NPAGES + 2) * PAGE_SIZE, GFP_KERNEL)) != NULL)
     {
-      pTmp = (MOTORDATA*)((((unsigned long)kmalloc_ptr) + PAGE_SIZE - 1) & PAGE_MASK);
+      pTmp = (MOTORSHARED*)((((unsigned long)kmalloc_ptr) + PAGE_SIZE - 1) & PAGE_MASK);
       for (i = 0; i < NPAGES * PAGE_SIZE; i += PAGE_SIZE)
       {
         SetPageReserved(virt_to_page(((unsigned long)pTmp) + i));
       }
       pMotor =  pTmp;
       memset(pMotor,0,sizeof(MotorData));
+      for(i = 0; i < NO_OF_OUTPUT_PORTS; i++)
+          Motor[i].shared = &(pMotor[i]);
 
 #ifdef DEBUG
       printk("  %s device register succes\n",DEVICE2_NAME);
@@ -1921,7 +1878,7 @@ static int Device2Init(void)
 
 static void Device2Exit(void)
 {
-  MOTORDATA   *pTmp;
+  MOTORSHARED   *pTmp;
   int         i;
 
   pTmp    =  pMotor;
