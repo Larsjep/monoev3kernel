@@ -826,7 +826,7 @@ static void reset(MOTOR *pm)
 	pm->curVelocity = 0;
 	pm->baseTime = pm->TimeCnt;
 	pm->moving = FALSE;
-	printk("Reset\n");
+	//printk("Reset\n");
 }
 
 
@@ -840,7 +840,7 @@ static void endMove(MOTOR *pm, UBYTE stalled)
 	pm->moving = FALSE;
 	pm->baseCnt += FixRound(pm->curCnt);
 	pm->shared->baseCnt = pm->baseCnt;
-	printk("end %d pos %d base %d calc %d actual %d\n", stalled, pm->TachoCnt, pm->baseCnt, FixRound(pm->curCnt), pm->curCnt);
+	//printk("end %d pos %d base %d calc %d actual %d\n", stalled, pm->TachoCnt, pm->baseCnt, FixRound(pm->curCnt), pm->curCnt);
 	pm->curCnt = 0;
 	pm->curVelocity = 0;
 	if (stalled)
@@ -864,12 +864,13 @@ static void calcPower(MOTOR *pm, SLONG error, SLONG P, SLONG I, SLONG D, SLONG o
 {
 	// use smoothing to reduce the noise in frequent tacho count readings
 	// New values
+    SLONG newPower, power;
 	pm->err1 = FixMult(pm->err1, F_SMOOTH1) + FixMult(error, F_SMOOTH2);  // fast smoothing
 	pm->err2 = FixMult(pm->err2, S_SMOOTH1) + FixMult(error, S_SMOOTH2); // slow smoothing
 	// Original values
 	//err1 = 0.5f * err1 + 0.5f * error;  // fast smoothing
 	//err2 = 0.8f * err2 + 0.2f * error; // slow smoothing
-    SLONG newPower = pm->basePower + FixMult(P, pm->err1) + FixMult(D, (pm->err1 - pm->err2));
+    newPower = pm->basePower + FixMult(P, pm->err1) + FixMult(D, (pm->err1 - pm->err2));
 	pm->basePower = pm->basePower + FixMult(I, (newPower - pm->basePower));
 	/*
     if (pm->err1 > 0)
@@ -884,7 +885,7 @@ static void calcPower(MOTOR *pm, SLONG error, SLONG P, SLONG I, SLONG D, SLONG o
 	else if (pm->basePower < -MAX_POWER)
 		pm->basePower = -MAX_POWER;
 	//newPower = (float) (power*0.75 + newPower*0.25);
-	SLONG power = (newPower > MAX_POWER ? MAX_POWER : newPower < -MAX_POWER ? -MAX_POWER : newPower);
+	power = (newPower > MAX_POWER ? MAX_POWER : newPower < -MAX_POWER ? -MAX_POWER : newPower);
 	power = FixRound(power*(SLONG)SPEED_PWMCNT_REL);
 	SetPower(pm->no, power, offset);
     //pm->Power = ((power * (10000 - FixAbs(offset)))/10000) + offset;
@@ -1202,7 +1203,6 @@ static ssize_t Device1Write(struct file *File,const char *Buffer,size_t Count,lo
       Motor[Tmp].Power = 0;
       Motor[Tmp].err1 = 0;
       Motor[Tmp].err2 = 0;
-printk("holdD %d moveD %d type %d", FixRound(Motor[Tmp].holdD), FixRound(Motor[Tmp].moveD), Buf[2]);
       reset(&Motor[Tmp]);
       Motor[Tmp].State  =  IDLE;
       Motor[Tmp].Mutex         =  FALSE;
