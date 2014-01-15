@@ -214,6 +214,7 @@ typedef struct
     SLONG tachoCnt;
     SLONG state;
     SLONG time;
+    SLONG serial;
 } MOTORSHARED;
 
 typedef   struct
@@ -897,6 +898,7 @@ static void calcPower(MOTOR *pm, SLONG error, SLONG P, SLONG I, SLONG D, SLONG o
 
 void startMove(MOTOR *pm, int t1, int t2, int t3, int c1, int c2, int c3, int v1, int v2, int a1, int a3, int sl, int st, int startTime, UBYTE hold)
 {
+    int t = pm->TimeCnt;
 	//printk("Start move\n");
     pm->mT1 = t1;
     pm->mT2 = t2;
@@ -911,9 +913,9 @@ void startMove(MOTOR *pm, int t1, int t2, int t3, int c1, int c2, int c3, int v1
     pm->stallLimit = intToFix(sl);
     pm->stallTime = st/SOFT_TIMER_MS;
     pm->curHold = hold;
-	pm->baseTime = pm->TimeCnt;
+	pm->baseTime = t;
 	if (startTime != 0)
-	    pm->baseTime -= (pm->TimeCnt - startTime);
+	    pm->baseTime -= (t - startTime);
     pm->moving = (pm->mV1 != 0 || pm->mV2 != 0);
     if (pm->moving)
         pm->shared->state = ST_START;
@@ -952,8 +954,9 @@ void regulateMotor2(MOTOR *pm)
 			//pm->State = IDLE;
 			// no longer accelerating, calculate new position
 			pm->curVelocity = pm->mV2;
-			pm->curCnt = (pm->mC2 + (SLONG)((long long)pm->curVelocity * (elapsed - (long long)pm->mT1) / 1024));
-			error = pm->curCnt - pm->tachoCnt;
+            //pm->curCnt = (pm->mC2 + (SLONG)((long long)pm->curVelocity * (elapsed - (long long)pm->mT1) / 1024));
+            pm->curCnt = (pm->mC2 + (SLONG)((long long)pm->curVelocity * (elapsed - (long long)pm->mT1) / 1024));
+            error = pm->curCnt - pm->tachoCnt;
             pm->shared->state = ST_MOVE;
 			//error = intToFix(FixRound(pm->curCnt) - pm->TachoCnt);
 			// Check to see if the move is complete
@@ -1013,7 +1016,7 @@ void regulateMotor2(MOTOR *pm)
 	}
 }
 
-
+int locked[4];
 /*! \page PwmModule
  *
  *  <hr size="1"/>
@@ -1042,17 +1045,19 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
 
     Motor[No].TachoCnt      +=  Tmp;
     Motor[No].OldTachoCnt    =  TmpTacho;
-    Motor[No].TimeCnt       +=  Motor[No].TimeInc;  // Add or sub so that TimerCnt is 1 mS resolution
+    //Motor[No].TimeCnt       +=  Motor[No].TimeInc;  // Add or sub so that TimerCnt is 1 mS resolution
 
     /* Update shared memory */
+    /*
     pMotor[No].curCnt   =  Motor[No].curCnt;
     pMotor[No].curVelocity   = Motor[No].curVelocity;
     pMotor[No].tachoCnt   =  Motor[No].TachoCnt;
     pMotor[No].time = Motor[No].TimeCnt;
-
+*/
 
     if (FALSE == Motor[No].Mutex)
     {
+        Motor[No].TimeCnt       +=  Motor[No].TimeInc;  // Add or sub so that TimerCnt is 1 mS resolution
       switch(Motor[No].State)
       {
         case UNLIMITED_UNREG:
@@ -1087,7 +1092,17 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
         }
         break;
       }
+      /* Update shared memory */
+      pMotor[No].time = Motor[No].TimeCnt;
+      pMotor[No].curCnt   =  Motor[No].curCnt;
+      pMotor[No].curVelocity   = Motor[No].curVelocity;
+      pMotor[No].tachoCnt   =  Motor[No].TachoCnt;
+      pMotor[No].serial = Motor[No].TimeCnt;
+      //if (pMotor[No].time == Motor[No].TimeCnt)
+          //printk("t eq %d\n", pMotor[No].time);
     }
+    else
+        locked[No]++;
   }
   return (HRTIMER_RESTART);
 }
@@ -1887,8 +1902,10 @@ static void Device2Exit(void)
 #ifdef DEBUG
   printk("  %s device unregistered\n",DEVICE2_NAME);
 #endif
-}
+for(i=0; i < 4; i++)
+    printk("lock %d cnt %d\n", i, locked[i]);
 
+}
 
 #ifndef PCASM
 module_param (HwId, charp, 0);
@@ -1909,6 +1926,7 @@ static int ModuleInit(void)
   }
 printk("long %d\n", sizeof(long));
 printk("long long %d\n", sizeof(long long));
+printk("sm size %d %d\n", sizeof(MOTORSHARED), ((char *)&pMotor[1]) - ((char *)&pMotor[0]));
 //ll = ll / (long long)1000;
 printk("div %d\n", (int)ll);
 
