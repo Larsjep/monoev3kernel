@@ -841,8 +841,6 @@ static void endMove(MOTOR *pm, UBYTE stalled)
 	//printk("end %d pos %d base %d calc %d actual %d\n", stalled, pm->TachoCnt, pm->baseCnt, FixRound(pm->curCnt), pm->curCnt);
 	pm->moving = FALSE;
 	pm->curVelocity = 0;
-    if (pm->shared->state == ST_START)
-        printk("set END from %d\n", pm->shared->state);
 	if (stalled)
 	{
 		// stalled try and maintain current position
@@ -956,8 +954,6 @@ void regulateMotor2(MOTOR *pm)
 			pm->curVelocity = (pm->mV1 + (SLONG)((long long)pm->mA1 * elapsed / (1024)));
 			pm->curCnt = pm->mC1 + ((SLONG)((long long)(pm->mV1 + pm->curVelocity) * elapsed / (2 * 1024)));
 			error = pm->curCnt - pm->tachoCnt;
-			if ((pm->shared->state != ST_START) && (pm->shared->state != ST_ACCEL))
-			    printk("set ACCEL from %d\n", pm->shared->state);
 			pm->shared->state = ST_ACCEL;
 			//error = intToFix(FixRound(pm->curCnt) - pm->TachoCnt);
 			//printk("e %d tc %d\n", error, pm->TachoCnt);
@@ -1117,8 +1113,6 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
       pMotor[No].curVelocity   = Motor[No].curVelocity;
       pMotor[No].tachoCnt   =  Motor[No].TachoCnt;
       pMotor[No].time2 = Motor[No].TimeCnt;
-      //if (pMotor[No].time == Motor[No].TimeCnt)
-          //printk("t eq %d\n", pMotor[No].time);
     }
     else
         locked[No]++;
