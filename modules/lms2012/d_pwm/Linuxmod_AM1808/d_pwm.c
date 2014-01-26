@@ -214,6 +214,7 @@ typedef struct
     SLONG tachoCnt;
     SLONG state;
     SLONG time;
+    SLONG time2;
     SLONG serial;
 } MOTORSHARED;
 
@@ -839,11 +840,9 @@ static void endMove(MOTOR *pm, UBYTE stalled)
 {
 	//printk("end %d pos %d base %d calc %d actual %d\n", stalled, pm->TachoCnt, pm->baseCnt, FixRound(pm->curCnt), pm->curCnt);
 	pm->moving = FALSE;
-	pm->baseCnt += FixRound(pm->curCnt);
-	pm->shared->baseCnt = pm->baseCnt;
-	//printk("end %d pos %d base %d calc %d actual %d\n", stalled, pm->TachoCnt, pm->baseCnt, FixRound(pm->curCnt), pm->curCnt);
-	pm->curCnt = 0;
 	pm->curVelocity = 0;
+    if (pm->shared->state == ST_START)
+        printk("set END from %d\n", pm->shared->state);
 	if (stalled)
 	{
 		// stalled try and maintain current position
@@ -903,9 +902,6 @@ void startMove(MOTOR *pm, int t1, int t2, int t3, int c1, int c2, int c3, int v1
     pm->mT1 = t1;
     pm->mT2 = t2;
     pm->mT3 = t3;
-    pm->mC1 = c1;
-    pm->mC2 = c2;
-    pm->mC3 = c3;
     pm->mV1 = v1;
     pm->mV2 = v2;
     pm->mA1 = a1;
@@ -914,9 +910,24 @@ void startMove(MOTOR *pm, int t1, int t2, int t3, int c1, int c2, int c3, int v1
     pm->stallTime = st/SOFT_TIMER_MS;
     pm->curHold = hold;
 	pm->baseTime = t;
+	// are we adjusting a current move?
 	if (startTime != 0)
 	    pm->baseTime -= (t - startTime);
-    pm->moving = (pm->mV1 != 0 || pm->mV2 != 0);
+	else
+	{
+	    // no so we can reset things to ditch any accumulated error
+	    int adjust = pm->curCnt;
+	    pm->baseCnt += FixRound(adjust);
+	    pm->shared->baseCnt = pm->baseCnt;
+	    pm->curCnt = 0;
+	    c1 -= adjust;
+	    c2 -= adjust;
+	    c3 -= adjust;
+	}
+    pm->mC1 = c1;
+    pm->mC2 = c2;
+    pm->mC3 = c3;
+    pm->moving = ((pm->mV1 != 0) || (pm->mV2 != 0));
     if (pm->moving)
         pm->shared->state = ST_START;
     else
@@ -924,6 +935,7 @@ void startMove(MOTOR *pm, int t1, int t2, int t3, int c1, int c2, int c3, int v1
 	//printk("Start move %d t1 %d t2 %d t3 %d pos %d\n", pm->moving, pm->mT1, pm->mT2, pm->mT3, FixRound(pm->curCnt));
 	//printk("C2 %d C3 %d V1 %d V2 %d hold %d\n", FixRound(pm->mC2), FixRound(pm->mC3), FixRound(pm->mV1), FixRound(pm->mV2), pm->curHold);
 	pm->State = UNLIMITED_REG;
+	pm->shared->serial++;
 }
 /**
  * Monitors time and tachoCount to regulate velocity and stop motor rotation at limit angle
@@ -944,6 +956,8 @@ void regulateMotor2(MOTOR *pm)
 			pm->curVelocity = (pm->mV1 + (SLONG)((long long)pm->mA1 * elapsed / (1024)));
 			pm->curCnt = pm->mC1 + ((SLONG)((long long)(pm->mV1 + pm->curVelocity) * elapsed / (2 * 1024)));
 			error = pm->curCnt - pm->tachoCnt;
+			if ((pm->shared->state != ST_START) && (pm->shared->state != ST_ACCEL))
+			    printk("set ACCEL from %d\n", pm->shared->state);
 			pm->shared->state = ST_ACCEL;
 			//error = intToFix(FixRound(pm->curCnt) - pm->TachoCnt);
 			//printk("e %d tc %d\n", error, pm->TachoCnt);
@@ -1000,8 +1014,13 @@ void regulateMotor2(MOTOR *pm)
 	{
 		// not moving, hold position
 		error = pm->curCnt - pm->tachoCnt;
-		if (FixAbs(error) <= pm->deadBand)
-			error = 0;
+		// implement deadband during hold
+		if (error > pm->deadBand)
+		    error -= pm->deadBand;
+		else if (error < -pm->deadBand)
+		    error += pm->deadBand;
+		else
+		    error = 0;
 		//printk("hold err %d\n", error);
 		//printk("rm 9");
 		calcPower(pm, error, pm->holdP, pm->holdI, pm->holdD, pm->offset);
@@ -1097,7 +1116,7 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
       pMotor[No].curCnt   =  Motor[No].curCnt;
       pMotor[No].curVelocity   = Motor[No].curVelocity;
       pMotor[No].tachoCnt   =  Motor[No].TachoCnt;
-      pMotor[No].serial = Motor[No].TimeCnt;
+      pMotor[No].time2 = Motor[No].TimeCnt;
       //if (pMotor[No].time == Motor[No].TimeCnt)
           //printk("t eq %d\n", pMotor[No].time);
     }
