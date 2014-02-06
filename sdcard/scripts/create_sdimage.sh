@@ -8,7 +8,7 @@ rm sd.img
 dd if=/dev/zero of=sd.img bs=516096c count=2000
 
 echo
-echo "  ...."creating patitions
+echo "  ...."creating partitions
 sudo fdisk -u -C2000 -S63 -H16 sd.img < fdisk.cmd &>> sdimage.err
 
 sleep 2

@@ -36,10 +36,13 @@ dpkg-deb --fsys-tarfile ../../external/bridge-utils* | tar x ./usr/sbin/brctl
 cd ../..
 cp ${LJGIT}/ev3classes/ev3classes.jar $img
 cp ${LJGIT}/DBusJava/dbusjava.jar $img
-cp ${LJGIT}/EV3HelloWorld/bin/EV3HelloWorld.class $img/$LJHOME/samples
+#cp ${LJGIT}/EV3HelloWorld/bin/EV3HelloWorld.class $img/$LJHOME/samples
 #cp ${LJGIT}/EV3Splash/bin/Splash.class $img/$LJHOME/bin/utils
 cp ${LJGIT}/EV3Menu/dist/EV3Menu.jar $img/$LJHOME/bin/utils
 cp ${LJGIT}/EV3Menu/src/wpa_supplicant.txt $img/$LJHOME/bin/utils
+cp ${LJGIT}/EV3BumperCar/dist/BumperCar.jar $img/$LJHOME/samples
+cp ${LJGIT}/EV3GraphicsTest/dist/GraphicsTest.jar $img/$LJHOME/samples
+cp ${LJGIT}/EV3SensorTest/dist/SensorTest.jar $img/$LJHOME/samples
 #cp ${LJGIT}/EV3PowerOff/bin/PowerOff.class $img/$LJHOME/bin/utils
 git describe > $img/version 2> /dev/null
 cp readme $img
