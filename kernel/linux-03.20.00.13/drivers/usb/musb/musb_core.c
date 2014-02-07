@@ -1566,7 +1566,8 @@ irqreturn_t musb_interrupt(struct musb *musb)
 	/* the core can interrupt us for multiple reasons; docs have
 	 * a generic interrupt flowchart to follow
 	 */
-	if (musb->int_usb & STAGE0_MASK)
+	//if (musb->int_usb & STAGE0_MASK)
+	if (musb->int_usb)
 		retval |= musb_stage0_irq(musb, musb->int_usb,
 				devctl, power);
 
