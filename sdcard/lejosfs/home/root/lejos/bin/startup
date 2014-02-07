@@ -12,5 +12,5 @@ echo "Load modules"
 ${LEJOS_HOME}/bin/init
 echo "Complete"
 # Run the menu
-(cd ${LEJOS_HOME}/bin/utils; ${LEJOS_HOME}/bin/jrun -jar EV3Menu.jar `hostname` `cat ${LEJOS_HOME}/version`)
+(cd ${LEJOS_HOME}/bin/utils; ${LEJOS_HOME}/bin/jrun -jar EV3Menu.jar `hostname` `cat ${LEJOS_HOME}/version` >/dev/null 2>&1)
 
