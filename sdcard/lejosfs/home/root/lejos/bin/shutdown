@@ -1,10 +1,13 @@
 #! /bin/sh
 . /etc/default/lejos
-# show shutdown splash
-cat ${LEJOS_HOME}/bin/images/shutdown.ev3i > /dev/fb
-#echo "Set power off flag..."
-#cd ${LEJOS_HOME}/bin/utils
-#${LEJOS_HOME}/bin/jrun PowerOff 
+. ${LEJOS_HOME}/bin/funcs.sh
+startLog
+log "Power off..."
+log "5"
+log "5 4"
+log "5 4 3"
+log "5 4 3 2"
+log "5 4 3 2 1"
+log ""
+stopLog
 sync;sync
-#Power will be turned off when modules are unloaded
-

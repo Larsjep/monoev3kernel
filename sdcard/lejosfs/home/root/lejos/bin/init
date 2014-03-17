@@ -8,14 +8,14 @@ HwId=`cat /var/volatile/HwId`
 echo "Hardware ID: $HwId"
 insmod ${LEJOS_MODULES}/d_iic.ko $HwId
 insmod ${LEJOS_MODULES}/d_uart.ko $HwId
-insmod ${LEJOS_MODULES}/d_power.ko $HwId
+#insmod ${LEJOS_MODULES}/d_power.ko $HwId
 insmod ${LEJOS_MODULES}/d_pwm.ko $HwId
 insmod ${LEJOS_MODULES}/d_ui.ko $HwId
 insmod ${LEJOS_MODULES}/d_analog.ko $HwId
 #insmod ${LEJOS_MODULES}/d_usbdev.ko `cat ${LMS2012_SETTINGS}/UsbInfo.dat`
-insmod ${LEJOS_MODULES}/d_usbhost.ko
+#insmod ${LEJOS_MODULES}/d_usbhost.ko
 insmod ${LEJOS_MODULES}/d_sound.ko $HwId
-insmod ${LEJOS_MODULES}/d_bt.ko $HwId
+#insmod ${LEJOS_MODULES}/d_bt.ko $HwId
 
 chmod 666 /dev/lms_pwm
 chmod 666 /dev/lms_motor

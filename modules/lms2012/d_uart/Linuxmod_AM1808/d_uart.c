@@ -542,7 +542,7 @@ static    void ModuleExit(void);
 #include  <linux/module.h>
 #include  <linux/miscdevice.h>
 #include  <asm/uaccess.h>
-
+#include <asm/cacheflush.h>
 
 #ifndef   DISABLE_PRU_UARTS
 #include  <linux/ti_omapl_pru_suart.h>
@@ -3611,6 +3611,7 @@ static int Device1Ioctl(struct inode *pNode, struct file *File, unsigned int Req
       {
         if (DevCon.Connection[Port] == CONN_INPUT_UART)
         {
+            (*pUart).Actual[0]++;
           if (UartConfigured[Port] == 0)
           {
             UartConfigured[Port]        =  1;
@@ -3698,6 +3699,8 @@ static int Device1Ioctl(struct inode *pNode, struct file *File, unsigned int Req
     break;
 
   }
+  // Ensure shared memory is updated correctly on Arm systems
+  //flush_dcache_page(virt_to_page((*pUart).Actual));
   return (Result);
 
 }
@@ -3799,13 +3802,23 @@ static ssize_t Device1Read(struct file *File,char *Buffer,size_t Count,loff_t *O
 #define     SHM_LENGTH    (sizeof(UartDefault))
 #define     NPAGES        ((SHM_LENGTH + PAGE_SIZE - 1) / PAGE_SIZE)
 static void *kmalloc_ptr;
+dma_addr_t dma_hdl;
 
 static int Device1Mmap(struct file *filp, struct vm_area_struct *vma)
 {
    int ret;
 
-   ret = remap_pfn_range(vma,vma->vm_start,virt_to_phys((void*)((unsigned long)pUart)) >> PAGE_SHIFT,vma->vm_end-vma->vm_start,PAGE_SHARED);
+   //ret = remap_pfn_range(vma,vma->vm_start,virt_to_phys((void*)((unsigned long)pUart)) >> PAGE_SHIFT,vma->vm_end-vma->vm_start, pgprot_noncached(PAGE_SHARED));
+   unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
 
+   offset += __pa(dma_hdl);
+
+   vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+
+
+
+   ret = remap_pfn_range(vma,vma->vm_start,offset >> PAGE_SHIFT,vma->vm_end-vma->vm_start, vma->vm_page_prot);
+printk("remap returns %d\n", ret);
    if (ret != 0)
    {
      ret  =  -EAGAIN;
@@ -3835,7 +3848,6 @@ static    struct miscdevice Device1 =
 
 
 
-
 static int Device1Init(void)
 {
   int     Result = 0;
@@ -3850,9 +3862,14 @@ static int Device1Init(void)
   }
   else
   {
+
+    kmalloc_ptr = dma_alloc_coherent(NULL, (NPAGES + 2) * PAGE_SIZE, &dma_hdl, GFP_KERNEL|GFP_DMA);
     // allocate kernel shared memory for uart values (pUart)
-    if ((kmalloc_ptr = kmalloc((NPAGES + 2) * PAGE_SIZE, GFP_KERNEL)) != NULL)
+      //if ((kmalloc_ptr = kmalloc((NPAGES + 2) * PAGE_SIZE, GFP_KERNEL)) != NULL)
+          //if ((kmalloc_ptr = kmalloc((NPAGES + 2) * PAGE_SIZE, GFP_DMA)) != NULL)
+    if (kmalloc_ptr != NULL)
     {
+        printk("memory ok");
       pTmp = (UWORD*)((((unsigned long)kmalloc_ptr) + PAGE_SIZE - 1) & PAGE_MASK);
       for (i = 0; i < NPAGES * PAGE_SIZE; i += PAGE_SIZE)
       {
@@ -3919,6 +3936,7 @@ static int Device1Init(void)
   }
   {
     UARTCTL c;
+  printk("mem address %x\n", kmalloc_ptr);
   printk("mem size %d\n", SHM_LENGTH);
   printk("status offset %d\n", ((char *)&((*pUart).Status[0]) - (char *)pUart));
   printk("input offset %d\n", ((char *)&((*pUart).Raw[0]) - (char *)pUart));
@@ -3931,6 +3949,7 @@ static int Device1Init(void)
   printk("UART_CLEAR_CHANGED %x\n", UART_CLEAR_CHANGED);
   printk("uartctl sz %d\n", sizeof(c));
   printk("port offset %d\n", (((char *)&c.Port) - (char *)&c));
+  printk("New uart driver\n");
   }
   return (Result);
 }
@@ -3984,7 +4003,8 @@ static void Device1Exit(void)
     printk("  %s memory page %d unmapped\n",DEVICE1_NAME,i);
 #endif
   }
-  kfree(kmalloc_ptr);
+  //kfree(kmalloc_ptr);
+  dma_free_coherent(NULL, (NPAGES + 2) * PAGE_SIZE, kmalloc_ptr, dma_hdl);
 
   misc_deregister(&Device1);
 #ifdef DEBUG

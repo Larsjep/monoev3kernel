@@ -1,5 +1,4 @@
 #!/bin/sh
-cat /home/root/lejos/bin/images/startup.ev3i > /dev/fb
 bluetoothd -n > /dev/null 2>&1 &
 
 echo "Initialize Bluetooth..."

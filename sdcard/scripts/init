@@ -1,0 +1,34 @@
+#!/bin/sh
+# This is the mai init script for the leJOS Noobs style installer. It runs
+# in place of the standard Linux init process. It basically installs a set of
+# scripts from the SD card and executes them to perform the actual install.
+/bin/mount -t proc proc /proc
+/bin/mount -o remount,rw,noatime /
+/bin/mount -t sysfs sysfs /sys
+/bin/hostname -F /etc/hostname
+LEJOS_HOME=/lejos
+mkdir $LEJOS_HOME 2> /dev/null
+device=/dev/mmcblk0
+bootfs=/dev/mmcblk0p1
+rootfs=/dev/mmcblk0p2
+mknod /dev/tty1 c 4 1
+mkdir /media/bootfs 2> /dev/null
+mount $bootfs /media/bootfs
+cp -r /media/bootfs/lejos/* $LEJOS_HOME
+chmod -r +x $LEJOS_HOME 
+umount /media/bootfs
+cd $LEJOS_HOME/bin
+. ./funcs.sh
+startLog
+log "Starting..."
+./check.sh $device $bootfs $rootfs
+./partition.sh $device
+./install.sh $bootfs $rootfs 
+log "Rebooting..."
+log "5"
+log "5 4"
+log "5 4 3"
+log "5 4 3 2"
+log "5 4 3 2 1"
+#exec /bin/sh
+reboot -f

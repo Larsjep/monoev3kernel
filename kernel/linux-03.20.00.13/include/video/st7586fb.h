@@ -13,12 +13,13 @@
 #define WIDTH		178
 #define HEIGHT		128
 
-#define FB_ST7586_MAGIC 'S'                                    // defines the magic number
-#define FB_ST7586_INIT_DISPLAY _IOW(FB_ST7586_MAGIC,0, int)    // defines ioctl call for .
-#define FB_ST7586_START_DISPLAY _IOW(FB_ST7586_MAGIC,1, int)   // defines our ioctl call.
+#define FB_ST7586_MAGIC 'S'
+#define FB_ST7586_INIT_DISPLAY _IOW(FB_ST7586_MAGIC, 0, int)
+
+#define FB_ST7586_UPDATE_DELAY (HZ / 20)
 
 /* Supported display modules */
-#define ST7586_DISPLAY_LMS2012_LCD	0	/* LMS2012 LCD */
+#define ST7586_DISPLAY_LEGO_EV3	0 /* LEGO Mindstorms EV3 LCD */
 
 /* Init script function */
 struct st7586_function {
@@ -43,6 +44,7 @@ struct st7586fb_par {
 	int a0;
 	int cs;
 	u8 *buf;
+	struct delayed_work dwork;
 };
 
 struct st7586fb_platform_data {
@@ -86,3 +88,4 @@ struct st7586fb_platform_data {
 #define ST7586_OTPCOUT	0xE1
 #define ST7586_OTPWR	0xE2
 #define ST7586_OTPRD	0xE3
+

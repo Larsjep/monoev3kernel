@@ -1,100 +1,74 @@
-#! /bin/bash
-# Based on an original script created by Lego.
-# leJOS additions Andy Shaw/Sven Kohler
-
-echo
-echo -------------------------------------------------------------------------------
-echo UPDATE SDCARD WITH NEWEST KERNEL, FILESYSTEM AND APPLICATION          TCP120709
-echo -------------------------------------------------------------------------------
-echo
-sudo -v
-mount=${1:-/media/`id -u -r -n`}
-jvm=${2:-`echo ejre*`}
-ipaddress=${3:-10.0.1.1}
+#! /bin/sh
+. $3/funcs.sh
+bootfs=$1
+rootfs=$2
+jvm=`echo $bootfs/ejre*`
+ipaddress=10.0.1.1
 LJHOME=home/root/lejos
-echo "Mount point is $mount"
 echo Java is $jvm
-echo "IP for BT and USB is $ipaddress"
-echo
-echo "  ...."checking.sdcard
-sleep 10
-set -e
 current=${PWD}
-
-if [[ -d "$mount/LMS2012" && -d "$mount/LMS2012_EXT" ]]
+log "Installing rootfs"
+tar -C "$rootfs" -jxf lmsfs.tar.bz2 
+rm "$rootfs"/etc/mtab
+rm "$rootfs"/etc/wpa_supplicant.conf
+sync
+log "Installing modules"
+rm -rf $rootfs/lib/modules/*
+cp -r modules/* $rootfs
+cp -r netmods/* "$rootfs/"/lib/modules/*/kernel/drivers/net/wireless/
+cp -r firmware/* "$rootfs"/
+rm "$rootfs"/lib/modules/*/modules.dep
+sync
+log "Installing leJOS"
+rm -rf "$rootfs"/home/root/lms2012
+cp -r lejosfs/* "$rootfs"
+cp ev3classes.jar "$rootfs"/$LJHOME/lib
+cp dbusjava.jar "$rootfs"/$LJHOME/lib
+cp mod/*.ko "$rootfs"/$LJHOME/mod
+cp version "$rootfs"/$LJHOME
+sync
+log "Configure network"
+sh -c "echo $ipaddress > '$rootfs'/$LJHOME/bin/netaddress"
+log "Install links"
+cd $rootfs/bin
+ln -s ../$LJHOME/bin/jrun jrun
+cd ../etc/rc0.d
+ln -s ../init.d/lejos K09lejos
+ln -s ../init.d/lejosunload S89lejosunload
+cd ../rc5.d
+ln -s ../init.d/dropbear S81dropbear
+ln -s ../init.d/lejos S98lejos
+cd $current
+rm "$rootfs"/var/lib/bluetooth
+mkdir "$rootfs"/var/lib/bluetooth
+log "Install libjna"
+cp -r libjna "$rootfs"/$LJHOME
+log "Copy config files"
+cp $bootfs/wpa_supplicant.conf "$rootfs"/etc 2> /dev/null
+cp $bootfs/wpa_supplicant.lejos $rootfs/$LJHOME/bin/utils/wpa_supplicant.conf 2> /dev/null
+cp $bootfs/hostname $rootfs/etc 2> /dev/null
+cp $bootfs/netaddress $rootfs/$LJHOME/bin 2> /dev/null
+ls $bootfs
+cd $bootfs
+ls
+pwd
+newjre=$(echo ejre*)
+echo "jre is $newjre"
+if [ -f $newjre ];
 then
-
-        echo "  ...."erasing.sdcard
-        sudo rm -rf "$mount/LMS2012"/*
-        sudo rm -rf "$mount/LMS2012_EXT"/*
-        sync
-
-        echo "  ...."copying.kernel.to.sdcard
-        sudo cp uImage "$mount/LMS2012/uImage"
-        sync
-
-        echo "  ...."copying.filesystem.to.sdcard
-	sudo tar -C "$mount/LMS2012_EXT" -jxf lmsfs.tar.bz2 
-	sudo rm "$mount/LMS2012_EXT"/etc/mtab
-        sync
-
-        echo "  ...."copying.extra.modules.to.sdcard
-	sudo rm -rf $mount/LMS2012_EXT/lib/modules/*
-	sudo cp -r modules/* $mount/LMS2012_EXT/
-        sudo cp -r netmods/* "$mount/LMS2012_EXT"/lib/modules/*/kernel/drivers/net/wireless/
-        sudo cp -r firmware/* "$mount/LMS2012_EXT"/
-        echo "  ...."force.depmod.on.first.boot
-	sudo rm "$mount/LMS2012_EXT"/lib/modules/*/modules.dep
-
-        echo "  ...."copying.lejos.to.sdcard
-        sudo rm -rf "$mount/LMS2012_EXT"/home/root/lms2012
-        sudo cp -r lejosfs/* "$mount/LMS2012_EXT"
-	sudo cp wpa_supplicant.conf "$mount/LMS2012_EXT"/etc
-	sudo cp ev3classes.jar "$mount/LMS2012_EXT"/$LJHOME/lib
-	sudo cp dbusjava.jar "$mount/LMS2012_EXT"/$LJHOME/lib
-	sudo cp mod/*.ko "$mount/LMS2012_EXT"/$LJHOME/mod
-	sudo cp version "$mount/LMS2012_EXT"/$LJHOME
-	sudo sh -c "echo $ipaddress > '$mount/LMS2012_EXT'/$LJHOME/bin/netaddress"
-	pushd "$mount/LMS2012_EXT" > /dev/null
-	cd bin
-	sudo ln -s ../$LJHOME/bin/jrun jrun
-	cd ../etc/rc0.d
-	sudo ln -s ../init.d/lejos K09lejos
-	sudo ln -s ../init.d/lejosunload S89lejosunload
-	cd ../rc5.d
-	sudo ln -s ../init.d/dropbear S81dropbear
-	sudo ln -s ../init.d/lejos S98lejos
-	popd > /dev/null
-	sudo rm "$mount/LMS2012_EXT"/var/lib/bluetooth
-	sudo mkdir "$mount/LMS2012_EXT"/var/lib/bluetooth
-    	if [ -e $jvm ]
-    	then
-        	echo "  ....  "Java
-		#sudo tar -C "$mount/LMS2012_EXT/$LJHOME" -axf $jvm 
-		sudo cp $jvm "$mount/LMS2012/"
-		#sudo echo $jvm "$mount/LMS2012_EXT/$LJHOME"/jrever
-        else
-                echo "   WARNING: file $jvm does not exist"
-	fi
-	if [ -e libjna ]
-	then
-        	echo "  ....  "Jna
-		sudo cp -r libjna "$mount/LMS2012_EXT"/$LJHOME
-	fi
-
-        echo "  ...."writing.to.sdcard
-        sync
-
-        echo
-        echo REMOVE sdcard
-
-else
-
-    echo
-    echo SDCARD NOT PROPERLY FORMATTED !!!
-
+  log "Install jre"
+  rm -rf $rootfs/$LJHOME/ejre* 2> /dev/null
+  log "extracting jre"
+  tar -C $rootfs/$LJHOME -zxf ${newjre}
+  echo ${newjre} > $rootfs/$LJHOME/jrever
+  rm $rootfs/$LJHOME/jreopt
 fi
-echo
-echo -------------------------------------------------------------------------------
-echo
+cd $rootfs/$LJHOME
+if [ ! -f jreopt ];
+then
+  log "Optimize java"
+  $rootfs/$LJHOME/ejre*/bin/java -client -Xshare:dump
+  touch jreopt
+fi
 
+sync

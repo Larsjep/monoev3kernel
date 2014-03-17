@@ -1060,7 +1060,7 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
 
     Motor[No].TachoCnt      +=  Tmp;
     Motor[No].OldTachoCnt    =  TmpTacho;
-    //Motor[No].TimeCnt       +=  Motor[No].TimeInc;  // Add or sub so that TimerCnt is 1 mS resolution
+    Motor[No].TimeCnt       +=  Motor[No].TimeInc;  // Add or sub so that TimerCnt is 1 mS resolution
 
     /* Update shared memory */
     /*
@@ -1072,7 +1072,7 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
 
     if (FALSE == Motor[No].Mutex)
     {
-        Motor[No].TimeCnt       +=  Motor[No].TimeInc;  // Add or sub so that TimerCnt is 1 mS resolution
+        //Motor[No].TimeCnt       +=  Motor[No].TimeInc;  // Add or sub so that TimerCnt is 1 mS resolution
       switch(Motor[No].State)
       {
         case UNLIMITED_UNREG:
@@ -1821,13 +1821,23 @@ static ssize_t Device2Read(struct file *File,char *Buffer,size_t Count,loff_t *O
 #define     SHM_LENGTH    (sizeof(MotorData))
 #define     NPAGES        ((SHM_LENGTH + PAGE_SIZE - 1) / PAGE_SIZE)
 static void *kmalloc_ptr;
+static dma_addr_t dma_hdl;
 
 
 static int Device2Mmap(struct file *filp, struct vm_area_struct *vma)
 {
    int ret;
+   unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
 
-   ret = remap_pfn_range(vma,vma->vm_start,virt_to_phys((void*)((unsigned long)pMotor)) >> PAGE_SHIFT,vma->vm_end-vma->vm_start,PAGE_SHARED);
+   offset += __pa(dma_hdl);
+
+   vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+
+
+
+   ret = remap_pfn_range(vma,vma->vm_start,offset >> PAGE_SHIFT,vma->vm_end-vma->vm_start, vma->vm_page_prot);
+
+   //ret = remap_pfn_range(vma,vma->vm_start,virt_to_phys((void*)((unsigned long)pMotor)) >> PAGE_SHIFT,vma->vm_end-vma->vm_start,PAGE_SHARED);
 
    if (ret != 0)
    {
@@ -1868,8 +1878,9 @@ static int Device2Init(void)
   }
   else
   { // allocate kernel shared memory for tacho counts and speed
-
-    if ((kmalloc_ptr = kmalloc((NPAGES + 2) * PAGE_SIZE, GFP_KERNEL)) != NULL)
+    kmalloc_ptr = dma_alloc_coherent(NULL, (NPAGES + 2) * PAGE_SIZE, &dma_hdl, GFP_KERNEL|GFP_DMA);
+    //if ((kmalloc_ptr = kmalloc((NPAGES + 2) * PAGE_SIZE, GFP_KERNEL)) != NULL)
+    if (kmalloc_ptr != NULL)
     {
       pTmp = (MOTORSHARED*)((((unsigned long)kmalloc_ptr) + PAGE_SIZE - 1) & PAGE_MASK);
       for (i = 0; i < NPAGES * PAGE_SIZE; i += PAGE_SIZE)
@@ -1909,7 +1920,8 @@ static void Device2Exit(void)
     printk("  %s memory page %d unmapped\n",DEVICE1_NAME,i);
 #endif
   }
-  kfree(kmalloc_ptr);
+  //kfree(kmalloc_ptr);
+  dma_free_coherent(NULL, (NPAGES + 2) * PAGE_SIZE, kmalloc_ptr, dma_hdl);
 
   misc_deregister(&Device2);
 #ifdef DEBUG

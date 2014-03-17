@@ -226,7 +226,7 @@ extern void rtl871x_cedbg(const char *fmt, ...);
 
 	#define ERR_8192C(x,...)  {}
 	#endif
-
+/*
 	#undef DBG_871X
 	#define DBG_871X _dbgdump
 
@@ -241,7 +241,7 @@ extern void rtl871x_cedbg(const char *fmt, ...);
 
 	#undef ERR_8192C
 	#define ERR_8192C _dbgdump
-
+*/
 #endif	//CONFIG_DEBUG_RTL8192C
 
 #endif	//__RTL871X_DEBUG_H__
