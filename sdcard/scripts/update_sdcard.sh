@@ -58,7 +58,7 @@ if [ -f $newjre ];
 then
   log "Install jre"
   rm -rf $rootfs/$LJHOME/ejre* 2> /dev/null
-  log "extracting jre"
+  log "Extracting jre"
   tar -C $rootfs/$LJHOME -zxf ${newjre}
   echo ${newjre} > $rootfs/$LJHOME/jrever
   rm $rootfs/$LJHOME/jreopt

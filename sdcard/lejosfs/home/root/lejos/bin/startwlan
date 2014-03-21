@@ -33,6 +33,7 @@ then
   ${LJBIN}/wpa_supplicant -B -Dwext -iwlan0 -c${LJBIN}/utils/base_wpa_supplicant.conf > /dev/null 2>&1
   exit
 fi
+${LJBIN}/wpa_supplicant -B -Dwext -iwlan0 -c$config > /dev/null 2>&1
 count=10
 while [ $count -gt 0 ]; do
   sleep 2 
