@@ -23,7 +23,7 @@ then
 fi
 
 log "Check size"
-if [ $totalSize -lt 2000 ]
+if [ $totalSize -lt 1800 ]
 then
   error "disk is too small"
 fi
