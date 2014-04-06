@@ -3111,6 +3111,12 @@ static enum hrtimer_restart Device1TimerInterrupt1(struct hrtimer *pTimer)
             UartPort[Port].InLength   =  UartPortReadData(Port,&UartPort[Port].Cmd,TmpBuffer,&UartPort[Port].Check,&CrcError);
             if (UartPort[Port].InLength)
             {
+              //!<  \todo Color sensor hack (wrong checksum in mode 4 data)
+             if ((UartPort[Port].Type == 29) && (GET_MODE(UartPort[Port].Cmd) == 4))
+             {
+               CrcError  =  0;
+             }
+
               if (!CrcError)
               {
                 if (UartPort[Port].Initialised == 0)
