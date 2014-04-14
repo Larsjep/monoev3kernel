@@ -13,7 +13,9 @@ mkdir $LJHOME/libjna 2> /dev/null
 mkdir $LJHOME/mod 2> /dev/null
 mkdir $LJHOME/btcache 2> /dev/null
 mkdir $LJHOME/samples 2> /dev/null
+mkdir $LJHOME/tools 2> /dev/null
 mkdir $LJHOME/bin/utils 2> /dev/null
+mkfifo $LJHOME/bin/utils/menufifo 2> /dev/null
 cp scripts/update_sdcard.sh $img
 cp -r lejosfs $img
 cp scripts/funcs.sh $img/lejosfs/home/root/lejos/bin
@@ -38,9 +40,8 @@ cp ${LJGIT}/ev3classes/ev3classes.jar $img
 cp ${LJGIT}/DBusJava/dbusjava.jar $img
 cp ${LJGIT}/EV3Menu/dist/EV3Menu.jar $img/$LJHOME/bin/utils
 cp ${LJGIT}/EV3Menu/src/wpa_supplicant.txt $img/$LJHOME/bin/utils
-cp ${LJGIT}/EV3BumperCar/dist/BumperCar.jar $img/$LJHOME/samples
-cp ${LJGIT}/EV3GraphicsTest/dist/GraphicsTest.jar $img/$LJHOME/samples
-cp ${LJGIT}/EV3SensorTest/dist/SensorTest.jar $img/$LJHOME/samples
+cp ${LJGIT}/ev3samples/*.jar $img/$LJHOME/samples
+cp ${LJGIT}/ev3menutools/*.jar $img/$LJHOME/tools
 git describe > $img/version 2> /dev/null
 cp readme $img
 rm -rf zipimage 2> /dev/null
