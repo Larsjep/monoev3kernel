@@ -4,11 +4,11 @@
 #******************************************************************************************************************
 # as normal user on linux pc terminal:
 
-export AM1808_COMPILER=~/CodeSourcery/Sourcery_G++_Lite/bin
+export AM1808_COMPILER=~/arm/arm-2009q1/bin
 
-export AM1808_DISTRO=DaVinci-PSP-SDK-03.20.00.13
+export AM1808_DISTRO=DaVinci-PSP-SDK-03.21.00.04
 export AM1808_LINUX=linux-03.20.00.13
-export AM1808_UBOOT=uboot-03.20.00.13
+export AM1808_UBOOT=uboot-03.21.00.04
 
-export AM1808_UBOOT_DIR=~/am1808/${AM1808_DISTRO}/src/u-boot/${AM1808_UBOOT}
+export AM1808_UBOOT_DIR=~/davinci/${AM1808_DISTRO}/src/u-boot/${AM1808_UBOOT}
 export AM1808_KERNEL=./${AM1808_LINUX}
